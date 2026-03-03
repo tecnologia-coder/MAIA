@@ -1,0 +1,42 @@
+# Diretiva de Classificação de Pedidos de Indicação
+
+**Objetivo:** Definir regras determinísticas para classificar mensagens recebidas em grupos de WhatsApp como um pedido legítimo de indicação (`PEDIDO_INDICACAO` ou `TRUE`) ou não (`NAO_PEDIDO` ou `FALSE`).
+
+## Regras Obrigatórias e Critérios Semânticos
+
+A análise semântica da mensagem deve seguir as regras abaixo para identificar a **intenção** de buscar uma recomendação que o usuário ainda não possui.
+
+1. **Ignorar mensagens próprias:** Mensagens enviadas pelo próprio sistema (`fromMe = true`) devem ser classificadas como FALSE.
+2. **Ignorar grupos excluídos:** Mensagens vindas de grupos configurados como excluídos não devem ser processadas como pedidos (classificar como FALSE).
+3. **Pedidos válidos (TRUE):** Um pedido só é válido se o usuário estiver ativamente buscando:
+   - Sugestões
+   - Indicações
+   - Experiências de terceiros para tomar uma decisão
+   - Recomendações
+   *(Intenções que usam verbos e expressões como "preciso de indicação", "alguém recomenda", "busco", "sabem de" indicam pedidos explícitos)*
+4. **Opinião sobre fornecedor específico já conhecido (FALSE):** Se o usuário já selecionou ou conhece um prestador e pergunta *apenas a opinião* sobre ele (Ex: "A clínica X é boa?", "Alguém já usou o serviço do Fulano?"), deve ser classificado como FALSE.
+5. **Relatos ou comentários (FALSE):** Mensagens que são relatos pessoais, comentários sem pergunta, desabafos ou constatações, sem solicitação clara de indicação: classificar como FALSE.
+6. **Dúvida genérica (FALSE):** Dúvidas que apenas perguntam "como fazer" algo, "o que é" ou pedem informações gerais sem pedir uma recomendação de serviço, produto ou profissional: classificar como FALSE.
+
+## Formato de Saída Obrigatório
+
+A resposta **NÃO DEVE** conter nenhum texto livre, marcações markdown fora do bloco de código ou justificativas adicionais além do exigido. 
+
+A saída deve ser **exclusivamente** um objeto JSON estruturado, conforme o modelo abaixo:
+
+```json
+{
+  "is_valid_request": boolean,
+  "reason": "explicação objetiva"
+}
+```
+
+### Detalhamento dos Campos:
+
+*   `"is_valid_request"`: Valor booleano. Retorna `true` apenas se a mensagem for um pedido de indicação válido (Regra 3, sem cair nas exceções). Caso contrário, retorna `false`.
+*   `"reason"`: String curta, objetiva e direta contendo a explicação da classificação embasada nas regras desta diretriz.
+
+**Proibições:**
+- Não permitir respostas textuais fora do JSON.
+- Não usar variações na nomenclatura das chaves JSON.
+- Não incluir respostas introdutórias como "Aqui está a análise...".

@@ -1,0 +1,20 @@
+# Temporary files
+.tmp/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env/
+.venv/
+env.bak/
+venv.bak/
+
+# Project Environment and Secrets
+.env
+credentials.json
+token.json

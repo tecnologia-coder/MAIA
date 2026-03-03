@@ -13,9 +13,21 @@ client = genai.Client(api_key=GOOGLE_API_KEY)
 MODEL_NAME = "gemini-2.0-flash"
 EMBEDDING_MODEL = "text-embedding-004"
 
+import time
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+
+def is_quota_error(exception):
+    return "429" in str(exception) or "RESOURCE_EXHAUSTED" in str(exception)
+
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception(is_quota_error),
+    reraise=True
+)
 def call_gemini(system_instruction, user_prompt, model_name=MODEL_NAME, json_mode=True):
     """
-    Realiza uma chamada para o Gemini usando a nova biblioteca google-genai.
+    Realiza uma chamada para o Gemini com retry automático para erros de cota (429).
     """
     try:
         config = types.GenerateContentConfig(
@@ -31,9 +43,8 @@ def call_gemini(system_instruction, user_prompt, model_name=MODEL_NAME, json_mod
         
         return response.text
     except Exception as e:
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            print("\n[AVISO] Limite de cota do Gemini atingido (429 RESOURCE_EXHAUSTED).")
-            print("Isso geralmente ocorre em chaves gratuitas. Aguarde um momento e tente novamente.")
+        if is_quota_error(e):
+            print(f"\n[AVISO] Limite de cota atingido. Tentando novamente em instantes...")
         else:
             print(f"[AI_CLIENT ERROR] Falha no Gemini: {e}")
         raise e

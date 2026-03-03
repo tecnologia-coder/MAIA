@@ -11,7 +11,7 @@ def search_suppliers_by_text(query_text):
     try:
         rpc_params = {
             "query_embedding": embedding,
-            "match_threshold": 0.5,
+            "filter": {},
             "match_count": 10
         }
         

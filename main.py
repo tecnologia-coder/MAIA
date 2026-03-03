@@ -28,8 +28,8 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
     # Lógica de Direcionamento: 
     # REGRAS DO USUÁRIO:
     # 1. Ignorar se não for texto (já verificado via if not message_text)
-    # 2. Resposta fixada no número de teste: 5585991864177 (temporário)
-    target_private_phone = "5585991864177"
+    # 2. Resposta sempre no privado de quem pediu a indicação
+    target_private_phone = participant_phone if participant_phone else phone
     
     if not message_text:
         print("[WEBHOOK] Mensagem recebida sem conteúdo de texto. Ignorando.")
@@ -42,7 +42,7 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         is_from_me=is_from_me,
         chat_id=phone, # ID de onde veio (para log de grupo)
         sender_name=sender_name,
-        target_phone=target_private_phone, # Para onde a resposta deve ir (fixado para teste)
+        target_phone=target_private_phone, # Para onde a resposta deve ir (Sempre o privado do remetente)
         real_user_phone=participant_phone # Para gestão de perfil
     )
     

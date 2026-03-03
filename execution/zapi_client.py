@@ -12,6 +12,9 @@ def send_zapi_message(phone, message):
     """
     Envia uma mensagem de texto via Z-API.
     """
+    # Limpa sufíxos padrão do WhatsApp
+    clean_phone = phone.split("@")[0]
+    
     if not ZAPI_INSTANCE_ID or not ZAPI_TOKEN:
         print("[Z-API] Erro: ZAPI_INSTANCE_ID ou ZAPI_TOKEN não configurados.")
         return None
@@ -25,7 +28,7 @@ def send_zapi_message(phone, message):
         headers["Client-Token"] = ZAPI_CLIENT_TOKEN
 
     payload = {
-        "phone": phone,
+        "phone": clean_phone,
         "message": message
     }
 

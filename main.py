@@ -42,7 +42,8 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         is_from_me=is_from_me,
         chat_id=phone, # ID de onde veio (para log de grupo)
         sender_name=sender_name,
-        target_phone=target_private_phone # Para onde a resposta deve ir (fixado para teste)
+        target_phone=target_private_phone, # Para onde a resposta deve ir (fixado para teste)
+        real_user_phone=participant_phone # Para gestão de perfil
     )
     
     return {

@@ -5,57 +5,21 @@ from execution.zapi_client import send_zapi_message
 from execution.ai_client import call_gemini, load_directive, get_embedding
 from execution.search_suppliers import search_suppliers_by_text
 from execution.get_metadata import get_metadata
-from execution.supabase_client import get_supabase_client
-
-# --- Funções de Persistência (L3 Determinística) ---
-
-def record_test_pedido(data):
-    """
-    Registra um pedido de indicação na tabela 'pedidos_indicacao'.
-    Adiciona o prefixo [DATA TEST] na descrição.
-    """
-    supabase = get_supabase_client()
-    
-    # Prefixando a descrição para identificação fácil no Supabase
-    if "pedido_descricao" in data and data["pedido_descricao"]:
-        data["pedido_descricao"] = f"[DATA TEST] {data['pedido_descricao']}"
-    else:
-        data["pedido_descricao"] = "[DATA TEST] Pedido sem descrição gerada"
-        
-    try:
-        # Nota: pedido_grupo e profile podem ser IDs reais ou virem de mocks de teste
-        res = supabase.table("pedidos_indicacao").insert(data).execute()
-        return res.data[0] if res.data else None
-    except Exception as e:
-        print(f"Erro ao registrar pedido no Supabase: {e}")
-        return None
-
-def record_test_recomendacao(data):
-    """
-    Registra uma recomendação na tabela 'recomendacao_fornecedor'.
-    Adiciona o prefixo [DATA TEST] no motivo.
-    """
-    supabase = get_supabase_client()
-    
-    if "motivo_recomendacao" in data and data["motivo_recomendacao"]:
-        data["motivo_recomendacao"] = f"[DATA TEST] {data['motivo_recomendacao']}"
-    else:
-        data["motivo_recomendacao"] = "[DATA TEST] Recomendação sem motivo gerado"
-        
-    try:
-        res = supabase.table("recomendacao_fornecedor").insert(data).execute()
-        return res.data[0] if res.data else None
-    except Exception as e:
-        print(f"Erro ao registrar recomendação no Supabase: {e}")
-        return None
+from execution.persistence import (
+    get_or_create_profile, 
+    get_or_create_group, 
+    record_pedido, 
+    record_recomendacao
+)
 
 # --- Orquestração Principal (MAIA) ---
 
-def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, sender_name=None, target_phone=None):
+def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, sender_name=None, target_phone=None, real_user_phone=None):
     """
     Fluxo completo: Classificação -> Categorização -> Busca Vetorial -> Match -> Resposta.
     - chat_id: ID do grupo ou chat de origem.
-    - target_phone: Número privado da usuária para resposta direta.
+    - target_phone: Número que RECEBERÁ a resposta da MAIA via Z-API.
+    - real_user_phone: Número de quem ENVIOU (para o perfil).
     """
     
     # 1. CLASSIFICATION
@@ -75,8 +39,18 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
 
     print("\n[DEBUG] Mensagem válida identificada. Categorizando...")
 
-    # 2. CATEGORIZATION
+    # 2. CATEGORIZATION & PERSISTENCE PREP
     try:
+        # Gestão de Perfil e Grupo (Produção)
+        profile_id = None
+        group_id = None
+        
+        if real_user_phone:
+            profile_id = get_or_create_profile(real_user_phone, sender_name or "Usuária")
+        
+        if chat_id and "group" in str(chat_id):
+            group_id = get_or_create_group(chat_id)
+
         cat_instr = load_directive("categorization_directive.md")
         metadata = get_metadata()
         cat_prompt = f"Categorias reais disponíveis:\n{json.dumps(metadata)}\n\nPedido do Usuário: {message_text}"
@@ -84,17 +58,16 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
         cat_res_raw = call_gemini(cat_instr, cat_prompt)
         cat_res = json.loads(cat_res_raw)
         
-        # Persistência do Pedido no Banco (com prefixo [DATA TEST])
+        # Registro do Pedido (Sem prefixos de teste)
         pedido_db_data = {
             "pedido_mensagem": message_text,
             "pedido_descricao": cat_res.get("pedido_descricao"),
             "pedido_categoria": cat_res.get("pedido_categoria"),
             "pedido_subcategoria": cat_res.get("pedido_subcategoria"),
-            # IDs de teste padrão se não fornecidos
-            "pedido_grupo": 1, 
-            "profile": 1
+            "pedido_grupo": group_id, 
+            "profile": profile_id
         }
-        pedido_record = record_test_pedido(pedido_db_data)
+        pedido_record = record_pedido(pedido_db_data)
         pedido_id = pedido_record["id"] if pedido_record else None
     except Exception as e:
         print(f"Erro na etapa de Categorização/Persistência: {e}")
@@ -126,7 +99,7 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
         final_res_raw = call_gemini(final_instr, final_prompt)
         final_res = json.loads(final_res_raw)
         
-        # 5. Persistência das Recomendações
+        # 5. Registro das Recomendações (Sem prefixos)
         if pedido_id and suppliers:
             for s in suppliers:
                 rec_data = {
@@ -134,7 +107,7 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
                     "fornecedor_recomendado": s.get("fornecedor_id"),
                     "motivo_recomendacao": s.get("motivo_match")
                 }
-                record_test_recomendacao(rec_data)
+                record_recomendacao(rec_data)
         
         # 6. ENVIO DIRETO VIA Z-API
         if target_phone and final_res.get("mensagem_final"):

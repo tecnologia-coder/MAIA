@@ -11,7 +11,7 @@ client = genai.Client(api_key=GOOGLE_API_KEY)
 
 # Nome do modelo padrão (estável e moderno)
 MODEL_NAME = "gemini-2.0-flash"
-EMBEDDING_MODEL = "text-embedding-004"
+EMBEDDING_MODEL = "text-embedding-001"
 
 import time
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception

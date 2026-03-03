@@ -8,12 +8,12 @@ def get_or_create_profile(phone, name="Usuária"):
     supabase = get_supabase_client()
     try:
         # Busca perfil existente
-        res = supabase.table("profiles").select("id").eq("numero", phone).execute()
+        res = supabase.table("profiles").select("id").eq("profile_numero", phone).execute()
         if res.data:
             return res.data[0]["id"]
-        
+
         # Cria novo perfil se não encontrar
-        insert_res = supabase.table("profiles").insert({"numero": phone, "nome": name}).execute()
+        insert_res = supabase.table("profiles").insert({"profile_numero": phone, "profile_nome": name}).execute()
         return insert_res.data[0]["id"] if insert_res.data else None
     except Exception as e:
         print(f"[PERSISTENCE] Erro ao obter/criar perfil: {e}")
@@ -27,12 +27,12 @@ def get_or_create_group(group_id, chat_name="Grupo WhatsApp"):
     supabase = get_supabase_client()
     try:
         # Busca grupo existente pelo ID do WhatsApp (ex: 120363...-group)
-        res = supabase.table("grupos").select("id").eq("whatsapp_id", group_id).execute()
+        res = supabase.table("grupos").select("id").eq("grupo_id", group_id).execute()
         if res.data:
             return res.data[0]["id"]
-        
+
         # Registra novo grupo
-        insert_res = supabase.table("grupos").insert({"whatsapp_id": group_id, "nome": chat_name}).execute()
+        insert_res = supabase.table("grupos").insert({"grupo_id": group_id, "grupo_nome": chat_name}).execute()
         return insert_res.data[0]["id"] if insert_res.data else None
     except Exception as e:
         print(f"[PERSISTENCE] Erro ao obter/criar grupo: {e}")

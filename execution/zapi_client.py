@@ -7,6 +7,30 @@ load_dotenv()
 ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
 ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
 ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN")
+N8N_RECEIVING_WEBHOOK_URL = os.getenv("N8N_RECEIVING_WEBHOOK_URL")
+
+def send_to_n8n_relay(phone, message):
+    """
+    Encaminha a resposta pronta para o nó webhook do n8n.
+    Ele será o responsável final por enviar via Z-API.
+    """
+    if not N8N_RECEIVING_WEBHOOK_URL:
+        print("[RELAY] Erro: N8N_RECEIVING_WEBHOOK_URL não configurado.")
+        return None
+
+    payload = {
+        "phone": phone,
+        "message": message
+    }
+
+    try:
+        response = requests.post(N8N_RECEIVING_WEBHOOK_URL, json=payload)
+        response.raise_for_status()
+        print(f"[RELAY] Resposta enviada para o n8n com sucesso (para o número: {phone})")
+        return response.json()
+    except Exception as e:
+        print(f"[RELAY] Erro ao enviar para o n8n: {e}")
+        return None
 
 def send_zapi_message(phone, message):
     """

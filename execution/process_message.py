@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from execution.zapi_client import send_zapi_message
+from execution.zapi_client import send_to_n8n_relay
 from execution.ai_client import call_gemini, load_directive, get_embedding
 from execution.search_suppliers import search_suppliers_by_text
 from execution.get_metadata import get_metadata
@@ -109,9 +109,9 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
                 }
                 record_recomendacao(rec_data)
         
-        # 6. ENVIO DIRETO VIA Z-API
+        # 6. RELAY PARA O n8n (Que enviará via Z-API)
         if target_phone and final_res.get("mensagem_final"):
-            send_zapi_message(target_phone, final_res["mensagem_final"])
+            send_to_n8n_relay(target_phone, final_res["mensagem_final"])
                 
         return final_res, None
     except Exception as e:

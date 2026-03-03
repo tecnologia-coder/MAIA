@@ -1,17 +1,22 @@
 import os
 from google import genai
 from google.genai import types
+from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Configuração da API
+# Configuração da API Google
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
+# Configuração da API OpenAI
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+oa_client = OpenAI(api_key=OPENAI_API_KEY)
+
 # Nome do modelo padrão (estável e moderno)
 MODEL_NAME = "gemini-2.0-flash"
-EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_MODEL = "text-embedding-3-small" # 1536 dimensões
 
 import time
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
@@ -51,18 +56,20 @@ def call_gemini(system_instruction, user_prompt, model_name=MODEL_NAME, json_mod
 
 def get_embedding(text, model=EMBEDDING_MODEL):
     """
-    Gera embedding vetorial para o texto fornecido.
+    Gera embedding vetorial para o texto fornecido usando OpenAI.
     """
     try:
-        result = client.models.embed_content(
-            model=model,
-            contents=text,
-            config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY")
+        # Garante que o texto não esteja vazio
+        if not text or not text.strip():
+            return []
+
+        response = oa_client.embeddings.create(
+            input=[text.replace("\n", " ")],
+            model=model
         )
-        # Na nova lib, result.embeddings é uma lista de objetos Embedding
-        return result.embeddings[0].values
+        return response.data[0].embedding
     except Exception as e:
-        print(f"[AI_CLIENT ERROR] Falha no Embedding: {e}")
+        print(f"[AI_CLIENT ERROR] Falha no Embedding OpenAI: {e}")
         raise e
 
 def load_directive(filename):

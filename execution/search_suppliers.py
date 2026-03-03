@@ -1,5 +1,5 @@
-from ai_client import get_embedding
-from supabase_client import get_supabase_client
+from execution.ai_client import get_embedding
+from execution.supabase_client import get_supabase_client
 
 def search_suppliers_by_text(query_text):
     """

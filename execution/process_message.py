@@ -1,11 +1,11 @@
 import json
 import os
 import sys
-from zapi_client import send_zapi_message
-from ai_client import call_gemini, load_directive, get_embedding
-from search_suppliers import search_suppliers_by_text
-from get_metadata import get_metadata
-from supabase_client import get_supabase_client
+from execution.zapi_client import send_zapi_message
+from execution.ai_client import call_gemini, load_directive, get_embedding
+from execution.search_suppliers import search_suppliers_by_text
+from execution.get_metadata import get_metadata
+from execution.supabase_client import get_supabase_client
 
 # --- Funções de Persistência (L3 Determinística) ---
 

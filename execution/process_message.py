@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from zapi_client import send_zapi_message
 from ai_client import call_gemini, load_directive, get_embedding
 from search_suppliers import search_suppliers_by_text
 from get_metadata import get_metadata
@@ -50,9 +51,11 @@ def record_test_recomendacao(data):
 
 # --- Orquestração Principal (MAIA) ---
 
-def process_whatsapp_message_e2e(message_text, is_from_me=False):
+def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, sender_name=None, target_phone=None):
     """
     Fluxo completo: Classificação -> Categorização -> Busca Vetorial -> Match -> Resposta.
+    - chat_id: ID do grupo ou chat de origem.
+    - target_phone: Número privado da usuária para resposta direta.
     """
     
     # 1. CLASSIFICATION
@@ -132,6 +135,10 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False):
                     "motivo_recomendacao": s.get("motivo_match")
                 }
                 record_test_recomendacao(rec_data)
+        
+        # 6. ENVIO DIRETO VIA Z-API
+        if target_phone and final_res.get("mensagem_final"):
+            send_zapi_message(target_phone, final_res["mensagem_final"])
                 
         return final_res, None
     except Exception as e:

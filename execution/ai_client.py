@@ -15,7 +15,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 oa_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Nome do modelo padrão (estável e moderno)
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = "gemini-3.1-flash"
 EMBEDDING_MODEL = "text-embedding-3-small" # 1536 dimensões
 
 import time

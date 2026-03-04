@@ -25,8 +25,8 @@ def is_quota_error(exception):
     return "429" in str(exception) or "RESOURCE_EXHAUSTED" in str(exception)
 
 @retry(
-    stop=stop_after_attempt(5),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
+    stop=stop_after_attempt(10),
+    wait=wait_exponential(multiplier=2, min=5, max=60),
     retry=retry_if_exception(is_quota_error),
     reraise=True
 )

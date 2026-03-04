@@ -1,3 +1,4 @@
+import json
 import os
 import requests
 from dotenv import load_dotenv
@@ -14,8 +15,8 @@ def send_zapi_message(phone, message):
     """
     Envia uma mensagem de texto via Z-API.
     """
-    # Limpa sufíxos padrão do WhatsApp
-    clean_phone = phone.split("@")[0]
+    # Se o telefone vier com @g.us ou @c.us, mantemos para garantir compatibilidade com grupos/privado
+    clean_phone = phone
     
     if not ZAPI_INSTANCE_ID or not ZAPI_TOKEN:
         print("[Z-API] Erro: ZAPI_INSTANCE_ID ou ZAPI_TOKEN não configurados.")
@@ -34,14 +35,17 @@ def send_zapi_message(phone, message):
         "message": message
     }
 
+    print(f"[Z-API] Tentando enviar para {clean_phone}. Payload: {json.dumps(payload)}")
+
     try:
         response = requests.post(url, json=payload, headers=headers)
+        if response.status_code != 200:
+            print(f"[Z-API] Erro {response.status_code}: {response.text}")
         response.raise_for_status()
         res_data = response.json()
         print(f"[Z-API] Mensagem enviada com sucesso para {phone}. ID: {res_data.get('messageId')}")
         return res_data
     except Exception as e:
         print(f"[Z-API] Erro ao enviar mensagem: {e}")
-        if hasattr(e, 'response') and e.response:
-            print(f"[Z-API] Detalhes do erro: {e.response.text}")
+        # Detalhes já impressos acima se status_code != 200
         return None

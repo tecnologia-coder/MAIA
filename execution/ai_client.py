@@ -1,4 +1,7 @@
+import json
 import os
+import time
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from google import genai
 from google.genai import types
 from openai import OpenAI
@@ -15,11 +18,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 oa_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Nome do modelo padrão (estável e moderno)
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-2.0-flash"
 EMBEDDING_MODEL = "text-embedding-3-small" # 1536 dimensões
-
-import time
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
 def is_quota_error(exception):
     return "429" in str(exception) or "RESOURCE_EXHAUSTED" in str(exception)
@@ -54,12 +54,38 @@ def call_gemini(system_instruction, user_prompt, model_name=MODEL_NAME, json_mod
             print(f"[AI_CLIENT ERROR] Falha no Gemini: {e}")
         raise e
 
+def call_ai_with_json_retry(system_instruction, user_prompt, model_name=MODEL_NAME):
+    """
+    Realiza a chamada à IA e garante a saída JSON. 
+    Se falhar no parse, tenta exatamente uma vez mais (conforme system_architecture_directive).
+    """
+    attempts = 0
+    max_json_attempts = 2
+    
+    while attempts < max_json_attempts:
+        attempts += 1
+        try:
+            raw_res = call_gemini(system_instruction, user_prompt, model_name=model_name, json_mode=True)
+            # Tenta limpar possíveis invólucros de markdown que a IA possa ter colocado
+            clean_res = raw_res.strip()
+            if clean_res.startswith("```json"):
+                clean_res = clean_res.replace("```json", "", 1).replace("```", "", 1).strip()
+            
+            return json.loads(clean_res)
+        except json.JSONDecodeError as e:
+            if attempts == max_json_attempts:
+                print(f"[AI_CLIENT CRITICAL] Falha total no parse JSON após {attempts} tentativas.")
+                raise e
+            print(f"[AI_CLIENT WARNING] Falha no parse JSON (tentativa {attempts}). Realizando retry...")
+        except Exception as e:
+            # Outros erros (como de rede/quota) já são tratados pelo decorador de retry
+            raise e
+
 def get_embedding(text, model=EMBEDDING_MODEL):
     """
     Gera embedding vetorial para o texto fornecido usando OpenAI.
     """
     try:
-        # Garante que o texto não esteja vazio
         if not text or not text.strip():
             return []
 
@@ -80,3 +106,4 @@ def load_directive(filename):
     path = os.path.join(base_path, "directives", filename)
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
+

@@ -19,23 +19,19 @@ def get_or_create_profile(phone, name="Usuária"):
         print(f"[PERSISTENCE] Erro ao obter/criar perfil: {e}")
         return None
 
-def get_or_create_group(group_id, chat_name="Grupo WhatsApp"):
+def get_group(group_id):
     """
     Verifica se o grupo está registrado na tabela 'grupos'.
-    Se não existir, registra. Retorna o ID interno do grupo.
+    Retorna o ID interno se existir, ou None se não encontrar.
     """
     supabase = get_supabase_client()
     try:
-        # Busca grupo existente pelo ID do WhatsApp (ex: 120363...-group)
         res = supabase.table("grupos").select("id").eq("grupo_id", group_id).execute()
         if res.data:
             return res.data[0]["id"]
-
-        # Registra novo grupo
-        insert_res = supabase.table("grupos").insert({"grupo_id": group_id, "grupo_nome": chat_name}).execute()
-        return insert_res.data[0]["id"] if insert_res.data else None
+        return None
     except Exception as e:
-        print(f"[PERSISTENCE] Erro ao obter/criar grupo: {e}")
+        print(f"[PERSISTENCE] Erro ao buscar grupo: {e}")
         return None
 
 def record_pedido(data):

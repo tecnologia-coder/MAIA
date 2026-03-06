@@ -107,3 +107,58 @@ def load_directive(filename):
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
+@retry(
+    stop=stop_after_attempt(10),
+    wait=wait_exponential(multiplier=2, min=5, max=60),
+    retry=retry_if_exception(is_quota_error),
+    reraise=True
+)
+def call_ai_agent(system_instruction, user_prompt, tools, model_name=MODEL_NAME):
+    """
+    Inicia uma sessão de chat com a LLM habilitada para Tool Calling (Agentic Flow).
+    O cliente interage automaticamente com as funções Python fornecidas até compilar a resposta final em JSON.
+    """
+    try:
+        print("[AI_AGENT] Iniciando sessão do Agente MAIA (Tool Calling)...")
+        # Usamos application/json para forçar a entrega final conforme a diretiva
+        config = types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            tools=tools,
+            temperature=0.2, # Baixa temperatura para validação determinística
+            response_mime_type='application/json'
+        )
+        
+        # O cliente Gemini com a versão moderna (google-genai) resolve as requisições de 
+        # ferramentas em loop (automatic_function_calling não nativo na v1 precisa ser emulado ou 
+        # repassado como tools na chamada se a sdk nova cuidar disso).
+        # A API moderna do genai suporta automatic_function_calling=True no chat.
+        chat_config = types.GenerateContentConfig(
+             system_instruction=system_instruction,
+             tools=tools,
+             temperature=0.2,
+             response_mime_type='application/json',
+             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=False)
+        )
+
+        chat = client.chats.create(model=model_name, config=chat_config)
+        
+        print("[AI_AGENT] Enviando Pedido e aguardando resoluções (Tools)...")
+        response = chat.send_message(user_prompt)
+        
+        raw_res = response.text
+        clean_res = raw_res.strip()
+        if clean_res.startswith("```json"):
+            clean_res = clean_res.replace("```json", "", 1).replace("```", "", 1).strip()
+            
+        print("[AI_AGENT] Retorno JSON processado com sucesso.")
+        return json.loads(clean_res)
+
+    except json.JSONDecodeError as e:
+        print(f"[AI_AGENT CRITICAL] Falha no parse JSON final retornado pelo Agente.")
+        raise e
+    except Exception as e:
+        if is_quota_error(e):
+            print(f"\n[AVISO] Limite de cota atingido no Agente. Tentando novamente...")
+        else:
+            print(f"[AI_AGENT ERROR] Falha no fluxo do Agente: {e}")
+        raise e

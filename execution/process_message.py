@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from execution.zapi_client import send_zapi_message
+from execution.zapi_client import send_zapi_message, send_zapi_button_list
 from execution.ai_client import call_ai_with_json_retry, load_directive
 from execution.search_suppliers import search_suppliers_by_text
 from execution.get_metadata import get_metadata
@@ -96,26 +96,33 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
         print(f"[ERRO] Falha na categorização: {e}")
         return None, "Erro técnico na categorização."
 
-    # 6. BUSCA VETORIAL (Com Threshold e Fallback embutidos em search_suppliers_by_text)
-    try:
-        candidates = search_suppliers_by_text(message_text)
-        print(f"[BUSCA] Encontrados {len(candidates)} candidatos iniciais.")
-    except Exception as e:
-        print(f"[ERRO] Falha na busca: {e}")
-        candidates = []
-
-    # 7. VALIDAÇÃO DE FORNECEDORES (Regra dos 2/3)
+    # 6. MATCH DE FORNECEDORES (Agentic Flow - Tool Calling)
     valid_suppliers = []
-    for cand in candidates:
-        if validate_supplier_2_3_rule(cand, pedido_sub, message_text, metadata_context):
-            # Extrair ID do parceiro (a metadata do Supabase usa 'ID' em maiúsculo)
-            f_id = cand.get("metadata", {}).get("ID") or cand.get("id")
-            valid_suppliers.append({
-                "fornecedor_id": f_id,
-                "motivo_match": f"Validação técnica positiva (Match 2/3)."
-            })
-            if len(valid_suppliers) >= 3: # Limite Final de 3
-                break
+    try:
+        from execution.ai_client import call_ai_agent
+        from execution.agent_tools import agentic_tools
+        
+        match_instr = load_directive("supplier_match_directive.md")
+        
+        # O prompt precisa passar o contexto completo para que a LLM saiba o que executar
+        agent_prompt = f"""
+Pedido original do usuário: {message_text}
+
+Contexto processado:
+- Categoria ID: {pedido_cat}
+- Subcategoria ID: {pedido_sub}
+- Descrição da IA de triagem: {pedido_desc}
+
+USE AS FERRAMENTAS DISPONÍVEIS para cumprir seu objetivo de recomendação conforme a diretriz.
+"""
+        print("[ORQUESTRAÇÃO] Transferindo controle para o Agente MAIA (Match)...")
+        agent_res = call_ai_agent(match_instr, agent_prompt, tools=agentic_tools)
+        
+        valid_suppliers = agent_res.get("recomendacoes", [])
+        print(f"[ORQUESTRAÇÃO] O Agente retornou {len(valid_suppliers)} fornecedores validados.")
+    except Exception as e:
+        print(f"[ERRO] Falha no fluxo agêntico de recomendação: {e}")
+        valid_suppliers = []
 
     # 8. PERSISTÊNCIA
     pedido_id = None
@@ -161,7 +168,23 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
 
     # 10. ENVIO WHATSAPP
     if target_phone and mensagem_final:
-        send_zapi_message(target_phone, mensagem_final)
+        if valid_suppliers:
+            # Transforma os links de recomendação em botões interativos
+            button_list = []
+            for i, s in enumerate(valid_suppliers):
+                link = s.get("link_fornecedor", "")
+                if link:
+                    button_list.append({
+                        "id": str(i + 1),
+                        "label": f"Falar com Fornecedor {i + 1}",
+                        "url": link # A Z-API suporta URLs acopladas (dependendo do client, caso contrário, label é usado se for só resposta).
+                    })
+            if button_list:
+                send_zapi_button_list(target_phone, mensagem_final, button_list)
+            else:
+                 send_zapi_message(target_phone, mensagem_final)
+        else:
+            send_zapi_message(target_phone, mensagem_final)
             
     return {"mensagem_final": mensagem_final}, None
 

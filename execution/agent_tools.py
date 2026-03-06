@@ -17,8 +17,10 @@ def supabase_vector_store(query: str) -> str:
     print(f"[TOOL] Chamando supabase_vector_store com query: '{query}'")
     try:
         candidates = search_suppliers_by_text(query)
-        # O agente espera um JSON (como string)
-        return json.dumps({"candidatos": candidates}, ensure_ascii=False)
+        print(f"[TOOL] Retornando {len(candidates)} candidatos para o Agente.")
+        res_json = json.dumps({"candidatos": candidates}, ensure_ascii=False)
+        # print(f"[TOOL DEBUG] Resposta JSON: {res_json[:200]}...")
+        return res_json
     except Exception as e:
         print(f"[TOOL ERRO] supabase_vector_store: {e}")
         return json.dumps({"candidatos": []})

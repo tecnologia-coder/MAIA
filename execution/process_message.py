@@ -16,12 +16,12 @@ from execution.persistence import (
 
 # --- Configurações e Thresholds ---
 CONFIDENCE_THRESHOLD = 0.80
-SIMILARITY_THRESHOLD = 0.78
+SIMILARITY_THRESHOLD = 0.60
 
 def validate_supplier_2_3_rule(supplier, pedido_subcategoria_id, pedido_texto, metadata_context):
     """
     Implementa a 'Regra dos 2/3' da supplier_match_directive:
-    1. Similaridade >= 0.78
+    1. Similaridade >= 0.60
     2. Subcategoria igual (Nome ou ID)
     3. Palavra-chave correspondente
     """

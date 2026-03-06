@@ -136,7 +136,6 @@ def call_ai_agent(system_instruction, user_prompt, tools, model_name=MODEL_NAME)
              system_instruction=system_instruction,
              tools=tools,
              temperature=0.2,
-             response_mime_type='application/json',
              automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=False)
         )
 
@@ -146,6 +145,7 @@ def call_ai_agent(system_instruction, user_prompt, tools, model_name=MODEL_NAME)
         response = chat.send_message(user_prompt)
         
         raw_res = response.text
+        
         clean_res = raw_res.strip()
         if clean_res.startswith("```json"):
             clean_res = clean_res.replace("```json", "", 1).replace("```", "", 1).strip()

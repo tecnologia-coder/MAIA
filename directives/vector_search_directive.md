@@ -14,9 +14,9 @@ Quando o Agente invoca a ferramenta `Supabase Vector Store(query)`, o sistema em
 
 1.  **Geração de Embedding:** O orquestrador converte a `query` (string) fornecida pelo Agente em um vetor numérico (embedding).
 2.  **Busca Vetorial (Top 10):** Executa a busca de similaridade de cosseno no banco de dados, retornando os **top 10** candidatos com maior score.
-3.  **Threshold de Similaridade:** Aplica um threshold mínimo de **0.78**. 
+3.  **Threshold de Similaridade:** Aplica um threshold mínimo de **0.60**. 
 4.  **Protocolo de Fallback:** 
-    *   Se nenhum resultado atingir o threshold de 0.78, o sistema executa automaticamente uma **busca lexical** no banco de dados.
+    *   Se nenhum resultado atingir o threshold de 0.60, o sistema executa automaticamente uma **busca lexical** no banco de dados.
 5.  **Ordenação:** Retorna a lista ao Agente, sempre em ordem **decrescente** de similaridade/relevância.
 
 ## 3. Contrato da Ferramenta (Interface para o Agente)

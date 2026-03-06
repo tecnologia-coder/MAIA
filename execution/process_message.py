@@ -9,7 +9,9 @@ from execution.persistence import (
     get_or_create_profile, 
     get_group, 
     record_pedido, 
-    record_recomendacao
+    update_pedido,
+    record_recomendacao,
+    record_mensagem
 )
 
 # --- Configurações e Thresholds ---
@@ -60,6 +62,21 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
     # 1. WEBHOOK / 2. TRIAGEM (Filtros Iniciais)
     if is_from_me:
         return None, "Mensagem própria ignorada pelo sistema."
+
+    # 2.3 Resolução de Identidade (Movido para o início para Log de Auditoria)
+    profile_id = get_or_create_profile(real_user_phone, sender_name or "Usuária") if real_user_phone else None
+    group_id = get_group(chat_id) if chat_id and "group" in str(chat_id) else None
+
+    # 2.5 LOG DE AUDITORIA (Registro de todas as mensagens recebidas)
+    try:
+        record_mensagem({
+            "grupo": group_id,
+            "message_type": "text",
+            "message_content": message_text,
+            "message_sender": profile_id
+        })
+    except Exception as e:
+        print(f"[AVISO] Falha ao registrar log de auditoria: {e}")
     
     # 3. CLASSIFICAÇÃO
     try:
@@ -80,7 +97,22 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
         print(f"[ERRO] Falha técnica na classificação: {e}")
         return None, "Erro técnico na triagem."
 
-    print(f"\n[DEBUG] Pedido Válido (Confiança: {confidence}). Categorizando...")
+    print(f"\n[DEBUG] Pedido Válido (Confiança: {confidence}). Registrando inicialmente...")
+    
+    # 4.5 REGISTRO INICIAL DO PEDIDO (Registro bruto conforme pedido pelo usuário)
+    pedido_id = None
+    try:
+        pedido_db_data = {
+            "pedido_mensagem": message_text,
+            "pedido_grupo": group_id, 
+            "profile": profile_id,
+            "recomendacao_feita": False
+        }
+        pedido_record = record_pedido(pedido_db_data)
+        pedido_id = pedido_record["id"] if pedido_record else None
+        print(f"[DEBUG] Registro Inicial realizado. ID: {pedido_id}")
+    except Exception as e:
+        print(f"[AVISO] Falha ao registrar pedido inicial: {e}")
 
     # 5. CATEGORIZAÇÃO
     try:
@@ -92,6 +124,17 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
         pedido_cat = cat_res.get("pedido_categoria")
         pedido_sub = cat_res.get("pedido_subcategoria")
         pedido_desc = cat_res.get("pedido_descricao")
+
+        # 5.5 ATUALIZAÇÃO DO PEDIDO COM CATEGORIZAÇÃO
+        if pedido_id:
+            update_data = {
+                "pedido_categoria": pedido_cat,
+                "pedido_subcategoria": pedido_sub,
+                "pedido_descricao": pedido_desc
+            }
+            update_pedido(pedido_id, update_data)
+            print(f"[DEBUG] Registro {pedido_id} atualizado com categorização: {pedido_cat}/{pedido_sub}")
+
     except Exception as e:
         print(f"[ERRO] Falha na categorização: {e}")
         return None, "Erro técnico na categorização."
@@ -123,25 +166,6 @@ USE AS FERRAMENTAS DISPONÍVEIS para cumprir seu objetivo de recomendação conf
     except Exception as e:
         print(f"[ERRO] Falha no fluxo agêntico de recomendação: {e}")
         valid_suppliers = []
-
-    # 8. PERSISTÊNCIA
-    pedido_id = None
-    try:
-        profile_id = get_or_create_profile(real_user_phone, sender_name or "Usuária") if real_user_phone else None
-        group_id = get_group(chat_id) if chat_id and "group" in str(chat_id) else None
-        
-        pedido_db_data = {
-            "pedido_mensagem": message_text,
-            "pedido_descricao": pedido_desc,
-            "pedido_categoria": pedido_cat,
-            "pedido_subcategoria": pedido_sub,
-            "pedido_grupo": group_id, 
-            "profile": profile_id
-        }
-        pedido_record = record_pedido(pedido_db_data)
-        pedido_id = pedido_record["id"] if pedido_record else None
-    except Exception as e:
-        print(f"[AVISO] Falha ao persistir pedido no banco: {e}")
 
     # 9. GERAÇÃO DE RESPOSTA
     try:

@@ -22,16 +22,17 @@ A **MAIA** atua primariamente como um sistema orquestrado de forma determinísti
 O pipeline de processamento segue uma sequência estruturada:
 
 1.  **Webhook:** Recebimento do evento de entrada (Z-API).
-2.  **Triagem:** Filtro inicial de mensagens e validação de pacotes.
-3.  **Classificação:** Determinação da intenção do usuário.
-4.  **Decisão de Fluxo (Python):** 
+2.  **Triagem:** Filtro inicial de mensagens e identificação de identidade (Profiles/Grupos).
+3.  **Log de Auditoria:** Registro de todas as mensagens recebidas na tabela `mensagens` (Supabase).
+4.  **Classificação:** Determinação da intenção do usuário.
+5.  **Decisão de Fluxo (Python):** 
     *   Se **FALSE** (Não é um pedido válido): Encerrar imediatamente.
     *   Se **TRUE**: Prosseguir.
-5.  **Categorização:** Vinculação do pedido a categorias e subcategorias do banco de dados.
-6.  **Match de Fornecedores (Agentic Flow):** A LLM utiliza ferramentas (Vector Store, consultas de ID) para buscar, validar e enriquecer a lista de indicações.
-7.  **Persistência:** Registro do estado e do pedido no banco de dados (Supabase).
-8.  **Geração de Resposta:** Síntese da resposta final baseada na persona oficial.
-9.  **Envio WhatsApp:** Entrega da mensagem via Z-API.
+6.  **Categorização:** Vinculação do pedido a categorias e subcategorias do banco de dados.
+7.  **Match de Fornecedores (Agentic Flow):** A LLM utiliza ferramentas (Vector Store, consultas de ID) para buscar, validar e enriquecer a lista de indicações.
+8.  **Persistência:** Registro do pedido estruturado na tabela `pedidos_indicacao`.
+9.  **Geração de Resposta:** Síntese da resposta final baseada na persona oficial.
+10. **Envio WhatsApp:** Entrega da mensagem via Z-API.
 
 ## 3. Regras de Orquestração e Controle
 

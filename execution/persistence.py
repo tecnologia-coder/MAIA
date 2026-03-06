@@ -58,3 +58,28 @@ def record_recomendacao(data):
     except Exception as e:
         print(f"[PERSISTENCE] Erro ao registrar recomendação: {e}")
         return None
+
+def record_mensagem(data):
+    """
+    Registra uma mensagem na tabela 'mensagens' para log de auditoria.
+    Campos esperados: grupo, message_type, message_content, message_sender
+    """
+    supabase = get_supabase_client()
+    try:
+        res = supabase.table("mensagens").insert(data).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        print(f"[PERSISTENCE] Erro ao registrar mensagem de auditoria: {e}")
+        return None
+
+def update_pedido(pedido_id, update_data):
+    """
+    Atualiza um pedido existente na tabela 'pedidos_indicacao'.
+    """
+    supabase = get_supabase_client()
+    try:
+        res = supabase.table("pedidos_indicacao").update(update_data).eq("id", pedido_id).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        print(f"[PERSISTENCE] Erro ao atualizar pedido {pedido_id}: {e}")
+        return None

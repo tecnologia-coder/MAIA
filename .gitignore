@@ -20,4 +20,11 @@ credentials.json
 token.json
 
 
+# Local logs and outputs
+*.txt
+*.log
+output.txt
+output_utf8.txt
+final_output.txt
+final_output_utf8.txt
 .env.example

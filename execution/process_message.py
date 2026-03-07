@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from execution.zapi_client import send_zapi_message, send_zapi_button_list
+from execution.zapi_client import send_zapi_message, send_zapi_button_actions
 from execution.ai_client import call_ai_with_json_retry, load_directive
 from execution.search_suppliers import search_suppliers_by_text
 from execution.get_metadata import get_metadata
@@ -193,18 +193,18 @@ USE AS FERRAMENTAS DISPONÍVEIS para cumprir seu objetivo de recomendação conf
     # 10. ENVIO WHATSAPP
     if target_phone and mensagem_final:
         if valid_suppliers:
-            # Transforma os links de recomendação em botões interativos
-            button_list = []
+            # Transforma os links de recomendação em botões de ação (URL)
+            button_actions = []
             for i, s in enumerate(valid_suppliers):
                 link = s.get("link_fornecedor", "")
                 if link:
-                    button_list.append({
-                        "id": str(i + 1),
+                    button_actions.append({
+                        "type": "URL",
                         "label": f"Falar com Fornecedor {i + 1}",
-                        "url": link # A Z-API suporta URLs acopladas (dependendo do client, caso contrário, label é usado se for só resposta).
+                        "url": link
                     })
-            if button_list:
-                send_zapi_button_list(target_phone, mensagem_final, button_list)
+            if button_actions:
+                send_zapi_button_actions(target_phone, mensagem_final, button_actions)
             else:
                  send_zapi_message(target_phone, mensagem_final)
         else:

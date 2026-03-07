@@ -44,7 +44,7 @@ def run_scenarios():
 
     # Mocar as funções de envio para não disparar mensagens reais
     with patch('execution.process_message.send_zapi_message') as mock_send, \
-         patch('execution.process_message.send_zapi_button_list') as mock_buttons:
+         patch('execution.process_message.send_zapi_button_actions') as mock_buttons:
         
         mock_send.return_value = {"status": "success", "messageId": "mock_id"}
         mock_buttons.return_value = {"status": "success", "messageId": "mock_id"}
@@ -66,12 +66,13 @@ def run_scenarios():
                     msg = result.get("mensagem_final", "")
                     print(f"STATUS: SUCESSO NO PROCESSAMENTO")
                     print("-" * 20)
-                    print(f"RESPOSTA MAIA:\n{msg}")
+                    # Encodamos para evitar erro de charmap no windows console ao printar emojis
+                    print(f"RESPOSTA MAIA:\n{msg.encode('ascii', 'ignore').decode('ascii')}")
                     print("-" * 20)
                     
                     # Verificar se enviou botões ou texto
                     if mock_buttons.called:
-                        print(f"ENVIO: Lista de Botões utilizada.")
+                        print(f"ENVIO: Botões de Ação (URL) utilizados. Chamadas: {mock_buttons.call_count}")
                     else:
                         print(f"ENVIO: Texto Simples utilizado.")
                 

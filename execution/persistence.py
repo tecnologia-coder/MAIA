@@ -83,3 +83,15 @@ def update_pedido(pedido_id, update_data):
     except Exception as e:
         print(f"[PERSISTENCE] Erro ao atualizar pedido {pedido_id}: {e}")
         return None
+
+def record_pedido_sem_fornecedor(data):
+    """
+    Registra uma ocorrência onde nenhum fornecedor foi encontrado para a query na tabela 'pedido_sem_fornecedor'.
+    """
+    supabase = get_supabase_client()
+    try:
+        res = supabase.table("pedido_sem_fornecedor").insert(data).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        print(f"[PERSISTENCE] Erro ao registrar pedido sem fornecedor: {e}")
+        return None

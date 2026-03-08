@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from execution.zapi_client import send_zapi_message, send_zapi_button_actions
 from execution.ai_client import call_ai_with_json_retry, load_directive
 from execution.search_suppliers import search_suppliers_by_text
@@ -11,7 +12,8 @@ from execution.persistence import (
     record_pedido, 
     update_pedido,
     record_recomendacao,
-    record_mensagem
+    record_mensagem,
+    record_pedido_sem_fornecedor
 )
 
 # --- Configurações e Thresholds ---
@@ -65,7 +67,15 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
 
     # 2.3 Resolução de Identidade (Movido para o início para Log de Auditoria)
     profile_id = get_or_create_profile(real_user_phone, sender_name or "Usuária") if real_user_phone else None
-    group_id = get_group(chat_id) if chat_id and "group" in str(chat_id) else None
+    
+    # Tratamento do ID do Grupo: Z-API envia '@g.us', mas o painel/banco salva como '-group'
+    group_id = None
+    if chat_id:
+        if "@g.us" in str(chat_id):
+            formatted_chat_id = str(chat_id).replace("@g.us", "-group")
+            group_id = get_group(formatted_chat_id)
+        elif "-group" in str(chat_id): # Fallback caso a API mude no futuro
+            group_id = get_group(chat_id)
 
     # 2.5 LOG DE AUDITORIA (Registro de todas as mensagens recebidas)
     try:
@@ -167,7 +177,29 @@ USE AS FERRAMENTAS DISPONÍVEIS para cumprir seu objetivo de recomendação conf
         print(f"[ERRO] Falha no fluxo agêntico de recomendação: {e}")
         valid_suppliers = []
 
-    # 9. GERAÇÃO DE RESPOSTA
+    # 9. GERAÇÃO DE RESPOSTA E FLUXO SILENCIOSO
+    if not valid_suppliers:
+        print(f"[ORQUESTRAÇÃO] Nenhum fornecedor encontrado. Gravando log silencioso (pedido_sem_fornecedor) e abortando envio.")
+        if pedido_id:
+            try:
+                # Usa a mesma IA de resposta para gerar a justificativa que ficará apenas no banco de dados
+                persona_instr = load_directive("persona_directive.md")
+                resp_instr = load_directive("response_generation_directive.md")
+                final_instr = f"{persona_instr}\n\n{resp_instr}"
+                final_prompt = f"Lista de Fornecedores Selecionados:\n[]\n\nPedido original: {message_text}"
+                final_res = call_ai_with_json_retry(final_instr, final_prompt)
+                motivo_falha = final_res.get("mensagem_final", "Nenhum fornecedor encontrado para os critérios.")
+                
+                record_pedido_sem_fornecedor({
+                    "pedido": pedido_id,
+                    "contato": profile_id,
+                    "motivo": motivo_falha
+                })
+            except Exception as e:
+                print(f"[ERRO] Falha ao registrar log de pedido_sem_fornecedor: {e}")
+                
+        return {"status": "silenced", "reason": "Nenhum fornecedor encontrado"}, None
+
     try:
         persona_instr = load_directive("persona_directive.md")
         resp_instr = load_directive("response_generation_directive.md")
@@ -184,7 +216,10 @@ USE AS FERRAMENTAS DISPONÍVEIS para cumprir seu objetivo de recomendação conf
                 record_recomendacao({
                     "pedido_indicacao": pedido_id,
                     "fornecedor_recomendado": s.get("fornecedor_id"), # Corrigido para 'recomendado'
-                    "motivo_recomendacao": s.get("motivo_match")
+                    "motivo_recomendacao": s.get("motivo_match"),
+                    "link_fornecedor": s.get("link_fornecedor"),
+                    "recomendacao_enviada": False,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
                 })
     except Exception as e:
         print(f"[ERRO] Falha na geração da resposta: {e}")
@@ -192,23 +227,20 @@ USE AS FERRAMENTAS DISPONÍVEIS para cumprir seu objetivo de recomendação conf
 
     # 10. ENVIO WHATSAPP
     if target_phone and mensagem_final:
-        if valid_suppliers:
-            # Transforma os links de recomendação em botões de ação (URL)
-            button_actions = []
-            for i, s in enumerate(valid_suppliers):
-                link = s.get("link_fornecedor", "")
-                if link:
-                    button_actions.append({
-                        "type": "URL",
-                        "label": f"Falar com Fornecedor {i + 1}",
-                        "url": link
-                    })
-            if button_actions:
-                send_zapi_button_actions(target_phone, mensagem_final, button_actions)
-            else:
-                 send_zapi_message(target_phone, mensagem_final)
+        # Transforma os links de recomendação em botões de ação (URL)
+        button_actions = []
+        for i, s in enumerate(valid_suppliers):
+            link = s.get("link_fornecedor", "")
+            if link:
+                button_actions.append({
+                    "type": "URL",
+                    "label": f"Falar com Fornecedor {i + 1}",
+                    "url": link
+                })
+        if button_actions:
+            send_zapi_button_actions(target_phone, mensagem_final, button_actions)
         else:
-            send_zapi_message(target_phone, mensagem_final)
+             send_zapi_message(target_phone, mensagem_final)
             
     return {"mensagem_final": mensagem_final}, None
 

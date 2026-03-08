@@ -95,3 +95,56 @@ def record_pedido_sem_fornecedor(data):
     except Exception as e:
         print(f"[PERSISTENCE] Erro ao registrar pedido sem fornecedor: {e}")
         return None
+
+def get_chat_history(session_id, limit=6):
+    """
+    Busca as últimas mensagens da tabela n8n_chat_histories para um usuário específico.
+    Retorna uma string formatada contendo o contexto recente.
+    """
+    supabase = get_supabase_client()
+    try:
+        # Busca ordenando da mais recente para mais antiga, depois inverte para ter ordem cronológica
+        res = supabase.table("n8n_chat_histories").select("message").eq("session_id", session_id).order("id", desc=True).limit(limit).execute()
+        if not res.data:
+            return ""
+            
+        history_str = ""
+        # res.data vem do mais recente pro mais antigo (desc=True). Invertemos para leitura natural.
+        for row in reversed(res.data):
+            msg = row.get("message", {})
+            msg_type = msg.get("type", "")
+            content = msg.get("content", "")
+            
+            if msg_type == "human":
+                history_str += f"Usuária: {content}\\n"
+            elif msg_type == "ai":
+                history_str += f"MAIA: {content}\\n"
+                
+        return history_str.strip()
+    except Exception as e:
+        print(f"[PERSISTENCE] Erro ao buscar histórico de chat: {e}")
+        return ""
+
+def save_to_chat_history(session_id, human_text=None, ai_text=None):
+    """
+    Salva a mensagem do usuário e/ou a resposta da IA na tabela n8n_chat_histories.
+    """
+    supabase = get_supabase_client()
+    try:
+        inserts = []
+        if human_text:
+            inserts.append({
+                "session_id": session_id,
+                "message": {"type": "human", "content": human_text, "additional_kwargs": {}, "response_metadata": {}}
+            })
+        if ai_text:
+            inserts.append({
+                "session_id": session_id,
+                "message": {"type": "ai", "content": ai_text, "additional_kwargs": {}, "response_metadata": {}, "invalid_tool_calls": [], "tool_calls": []}
+            })
+            
+        if inserts:
+            supabase.table("n8n_chat_histories").insert(inserts).execute()
+            
+    except Exception as e:
+        print(f"[PERSISTENCE] Erro ao salvar log no histórico de chat: {e}")

@@ -13,7 +13,9 @@ from execution.persistence import (
     update_pedido,
     record_recomendacao,
     record_mensagem,
-    record_pedido_sem_fornecedor
+    record_pedido_sem_fornecedor,
+    get_chat_history,
+    save_to_chat_history
 )
 
 # --- Configurações e Thresholds ---
@@ -88,10 +90,15 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
     except Exception as e:
         print(f"[AVISO] Falha ao registrar log de auditoria: {e}")
     
-    # 3. CLASSIFICAÇÃO
+    # 3. RECUPERAR MEMÓRIA E CLASSIFICAR
+    # Puxa as últimas interações da n8n_chat_histories para passar contexto à IA
+    chat_history = get_chat_history(real_user_phone, limit=5)
+    memory_context = f"\n[HISTÓRICO RECENTE DA CONVERSA]\n{chat_history}" if chat_history else ""
+
     try:
         class_instr = load_directive("classification_directive.md")
-        class_res = call_ai_with_json_retry(class_instr, message_text)
+        class_prompt = f"{message_text}{memory_context}"
+        class_res = call_ai_with_json_retry(class_instr, class_prompt)
         
         # 4. DECISÃO DE FLUXO (Python)
         is_valid = class_res.get("is_valid_request")
@@ -129,7 +136,7 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
     try:
         cat_instr = load_directive("categorization_directive.md")
         metadata_context = get_metadata()
-        cat_prompt = f"Categorias reais disponíveis:\n{json.dumps(metadata_context)}\n\nPedido do Usuário: {message_text}"
+        cat_prompt = f"Categorias reais disponíveis:\n{json.dumps(metadata_context)}\n\nPedido do Usuário: {message_text}{memory_context}"
         cat_res = call_ai_with_json_retry(cat_instr, cat_prompt)
         
         pedido_cat = cat_res.get("pedido_categoria")
@@ -161,6 +168,7 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
         # O prompt precisa passar o contexto completo para que a LLM saiba o que executar
         agent_prompt = f"""
 Pedido original do usuário: {message_text}
+{memory_context}
 
 Contexto processado:
 - Categoria ID: {pedido_cat}
@@ -251,6 +259,10 @@ Retorne SOMENTE um JSON válido com a chave "motivo_tecnico".'''
     # Atualizando status do pedido indicando que o ciclo encerrou (com sucesso)
     if pedido_id:
         update_pedido(pedido_id, {"recomendacao_feita": True})
+        
+    # Salvar Interação no Histórico de Longo Prazo
+    if real_user_phone:
+        save_to_chat_history(real_user_phone, human_text=message_text, ai_text=mensagem_final)
             
     return {"mensagem_final": mensagem_final}, None
 

@@ -116,6 +116,7 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
             "pedido_mensagem": message_text,
             "pedido_grupo": group_id, 
             "profile": profile_id,
+            "pedido_por": {"nome": sender_name or "Usuária", "telefone": real_user_phone},
             "recomendacao_feita": False
         }
         pedido_record = record_pedido(pedido_db_data)
@@ -197,6 +198,9 @@ Retorne SOMENTE um JSON válido com a chave "motivo_tecnico".'''
                     "contato": profile_id,
                     "motivo": motivo_falha
                 })
+                
+                # Atualizando status do pedido indicando que o ciclo encerrou (sem successo)
+                update_pedido(pedido_id, {"recomendacao_feita": True})
             except Exception as e:
                 print(f"[ERRO] Falha ao registrar log de pedido_sem_fornecedor: {e}")
                 
@@ -243,6 +247,10 @@ Retorne SOMENTE um JSON válido com a chave "motivo_tecnico".'''
             send_zapi_button_actions(target_phone, mensagem_final, button_actions)
         else:
              send_zapi_message(target_phone, mensagem_final)
+             
+    # Atualizando status do pedido indicando que o ciclo encerrou (com sucesso)
+    if pedido_id:
+        update_pedido(pedido_id, {"recomendacao_feita": True})
             
     return {"mensagem_final": mensagem_final}, None
 

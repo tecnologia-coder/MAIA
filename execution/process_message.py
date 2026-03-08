@@ -182,13 +182,15 @@ USE AS FERRAMENTAS DISPONÍVEIS para cumprir seu objetivo de recomendação conf
         print(f"[ORQUESTRAÇÃO] Nenhum fornecedor encontrado. Gravando log silencioso (pedido_sem_fornecedor) e abortando envio.")
         if pedido_id:
             try:
-                # Usa a mesma IA de resposta para gerar a justificativa que ficará apenas no banco de dados
-                persona_instr = load_directive("persona_directive.md")
-                resp_instr = load_directive("response_generation_directive.md")
-                final_instr = f"{persona_instr}\n\n{resp_instr}"
-                final_prompt = f"Lista de Fornecedores Selecionados:\n[]\n\nPedido original: {message_text}"
-                final_res = call_ai_with_json_retry(final_instr, final_prompt)
-                motivo_falha = final_res.get("mensagem_final", "Nenhum fornecedor encontrado para os critérios.")
+                # Gera um log técnico focado nos critérios que falharam (em vez de uma mensagem para o cliente)
+                log_instr = '''Atue como um analista de dados do sistema MAIA. 
+Sua tarefa é gerar uma justificativa curta, direta e técnica (máximo 2 linhas) do motivo pelo qual nenhum fornecedor foi encontrado para a solicitação abaixo.
+Foque nos critérios específicos do pedido que provavelmente não existem na base atual (ex: região, subcategoria muito específica, restrição de dias).
+Retorne SOMENTE um JSON válido com a chave "motivo_tecnico".'''
+                
+                final_prompt = f"Pedido original: '{message_text}'\nCategoria processada: {pedido_cat}\nSubcategoria processada: {pedido_sub}\nDescritivo extraído: {pedido_desc}"
+                final_res = call_ai_with_json_retry(log_instr, final_prompt)
+                motivo_falha = final_res.get("motivo_tecnico", "Nenhum fornecedor compatível encontrado para os critérios da busca.")
                 
                 record_pedido_sem_fornecedor({
                     "pedido": pedido_id,

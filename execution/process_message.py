@@ -90,6 +90,28 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
     except Exception as e:
         print(f"[AVISO] Falha ao registrar log de auditoria: {e}")
     
+    # 2.8 FILTRO HEURÍSTICO (Contenção de Custos / Rate Limit)
+    # Lista de palavras-chave fortemente associadas a pedidos de indicação
+    intent_keywords = [
+        "indica", "indicação", "indicacao", "indicar", "recomenda", "recomendação", "recomendacao", "recomende",
+        "sugere", "sugestão", "sugestao", "procuro", "procurando", "busco", "buscando", 
+        "preciso", "precisando", "queria", "alguem tem", "alguém tem", "alguem conhece", "alguém conhece", 
+        "alguem sabe", "alguém sabe", "contato", "telefone", "onde acho", "onde encontro", 
+        "profissional", "serviço", "servico", "ajuda com", "conserto", "orçamento", "orcamento"
+    ]
+    
+    msg_lower = message_text.lower()
+    
+    # Regra 1: Mensagens muito curtas (geralmente saudações, sim/não, emojis)
+    if len(message_text.strip().split()) <= 2:
+        print(f"[TRIAGEM HEURÍSTICA] Ignorado: Mensagem muito curta ('{message_text}')")
+        return None, "Ignorado pela heurística: Mensagem muito curta."
+        
+    # Regra 2: Ausência de palavras de intenção de busca/pedido
+    if not any(keyword in msg_lower for keyword in intent_keywords):
+        print(f"[TRIAGEM HEURÍSTICA] Ignorado: Sem intenção de pedido ('{message_text}')")
+        return None, "Ignorado pela heurística: Ausência de intenção de pedido."
+        
     # 3. RECUPERAR MEMÓRIA E CLASSIFICAR
     # Puxa as últimas interações da n8n_chat_histories para passar contexto à IA
     chat_history = get_chat_history(real_user_phone, limit=5)

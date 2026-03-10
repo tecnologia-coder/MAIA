@@ -21,13 +21,14 @@ oa_client = OpenAI(api_key=OPENAI_API_KEY)
 MODEL_NAME = "gemini-2.0-flash"
 EMBEDDING_MODEL = "text-embedding-3-small" # 1536 dimensões
 
-def is_quota_error(exception):
-    return "429" in str(exception) or "RESOURCE_EXHAUSTED" in str(exception)
+def is_retryable_error(exception):
+    err_str = str(exception)
+    return any(code in err_str for code in ["429", "503", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "INTERNAL"])
 
 @retry(
     stop=stop_after_attempt(10),
     wait=wait_exponential(multiplier=2, min=5, max=60),
-    retry=retry_if_exception(is_quota_error),
+    retry=retry_if_exception(is_retryable_error),
     reraise=True
 )
 def call_gemini(system_instruction, user_prompt, model_name=MODEL_NAME, json_mode=True):
@@ -48,7 +49,7 @@ def call_gemini(system_instruction, user_prompt, model_name=MODEL_NAME, json_mod
         
         return response.text
     except Exception as e:
-        if is_quota_error(e):
+        if is_retryable_error(e):
             print(f"\n[AVISO] Limite de cota atingido. Tentando novamente em instantes...")
         else:
             print(f"[AI_CLIENT ERROR] Falha no Gemini: {e}")
@@ -110,7 +111,7 @@ def load_directive(filename):
 @retry(
     stop=stop_after_attempt(10),
     wait=wait_exponential(multiplier=2, min=5, max=60),
-    retry=retry_if_exception(is_quota_error),
+    retry=retry_if_exception(is_retryable_error),
     reraise=True
 )
 def call_ai_agent(system_instruction, user_prompt, tools, model_name=MODEL_NAME):
@@ -158,7 +159,7 @@ def call_ai_agent(system_instruction, user_prompt, tools, model_name=MODEL_NAME)
         print(f"[AI_AGENT CRITICAL] Raw response: {raw_res[:500]}")
         raise e
     except Exception as e:
-        if is_quota_error(e):
+        if is_retryable_error(e):
             print(f"\n[AVISO] Limite de cota atingido no Agente. Tentando novamente...")
         else:
             print(f"[AI_AGENT ERROR] Falha no fluxo do Agente: {e}")

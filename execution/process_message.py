@@ -309,6 +309,8 @@ Fornecedores selecionados para recomendar:
         for i, s in enumerate(valid_suppliers[:3]):
             fid = s.get("fornecedor_id", 0)
             supplier_params.append(f"supplier{i + 1}={fid}")
+        
+        button_actions = []
         if supplier_params:
             partner_url = "https://maiahub.lovable.app/contato_fornecedor?" + "&".join(supplier_params)
             button_actions = [{
@@ -316,14 +318,20 @@ Fornecedores selecionados para recomendar:
                 "label": "Falar com parceiros",
                 "url": partner_url
             }]
+
+        # Envio para a Usuária
+        if button_actions:
             send_zapi_button_actions(target_phone, mensagem_final, button_actions)
         else:
-             send_zapi_message(target_phone, mensagem_final)
+            send_zapi_message(target_phone, mensagem_final)
 
         # 10.1 REPLICAR MENSAGEM NO GRUPO DE COORDENAÇÃO
         GRUPO_COORDENACAO_ZAPI = "120363422760214316-group"
         try:
-            send_zapi_message(GRUPO_COORDENACAO_ZAPI, mensagem_final)
+            if button_actions:
+                send_zapi_button_actions(GRUPO_COORDENACAO_ZAPI, mensagem_final, button_actions)
+            else:
+                send_zapi_message(GRUPO_COORDENACAO_ZAPI, mensagem_final)
             print(f"[ORQUESTRAÇÃO] Mensagem replicada no grupo de coordenação.")
         except Exception as e:
             print(f"[AVISO] Falha ao enviar para o grupo de coordenação: {e}")

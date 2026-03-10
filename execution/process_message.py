@@ -263,17 +263,18 @@ Retorne SOMENTE um JSON válido com a chave "motivo_tecnico".'''
 
     # 10. ENVIO WHATSAPP
     if target_phone and mensagem_final:
-        # Transforma os links de recomendação em botões de ação (URL)
-        button_actions = []
-        for i, s in enumerate(valid_suppliers):
-            link = s.get("link_fornecedor", "")
-            if link:
-                button_actions.append({
-                    "type": "URL",
-                    "label": f"Falar com Fornecedor {i + 1}",
-                    "url": link
-                })
-        if button_actions:
+        # Monta botão único "Falar com parceiros" com IDs dos fornecedores na URL
+        supplier_params = []
+        for i, s in enumerate(valid_suppliers[:3]):
+            fid = s.get("fornecedor_id", 0)
+            supplier_params.append(f"supplier{i + 1}={fid}")
+        if supplier_params:
+            partner_url = "https://maiahub.lovable.app/contato_fornecedor?" + "&".join(supplier_params)
+            button_actions = [{
+                "type": "URL",
+                "label": "Falar com parceiros",
+                "url": partner_url
+            }]
             send_zapi_button_actions(target_phone, mensagem_final, button_actions)
         else:
              send_zapi_message(target_phone, mensagem_final)

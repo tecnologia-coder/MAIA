@@ -3,7 +3,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from execution.zapi_client import send_zapi_message, send_zapi_button_actions
-from execution.ai_client import call_ai_with_json_retry, load_directive
+from execution.ai_client import call_ai_with_json_retry, call_claude, load_directive
 from execution.search_suppliers import search_suppliers_by_text
 from execution.get_metadata import get_metadata
 from execution.persistence import (
@@ -272,7 +272,13 @@ Retorne SOMENTE um JSON válido com a chave "motivo_tecnico".'''
         final_instr = f"{persona_instr}\n\n{resp_instr}"
         final_prompt = f"Lista de Fornecedores Selecionados:\n{json.dumps(valid_suppliers)}\n\nPedido original: {message_text}"
         
-        final_res = call_ai_with_json_retry(final_instr, final_prompt)
+        # Usa Claude para geração humanizada; fallback para Gemini se chave não configurada
+        try:
+            final_res = call_claude(final_instr, final_prompt)
+            print("[ORQUESTRAÇÃO] Mensagem gerada via Claude.")
+        except RuntimeError:
+            print("[ORQUESTRAÇÃO] Claude não configurado. Usando Gemini como fallback.")
+            final_res = call_ai_with_json_retry(final_instr, final_prompt)
         mensagem_final = final_res.get("mensagem_final")
         
         # Registrar Recomendações no Banco

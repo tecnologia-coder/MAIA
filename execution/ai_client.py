@@ -5,6 +5,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from google import genai
 from google.genai import types
 from openai import OpenAI
+import anthropic
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,8 +18,13 @@ client = genai.Client(api_key=GOOGLE_API_KEY)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 oa_client = OpenAI(api_key=OPENAI_API_KEY)
 
+# Configuração da API Anthropic (Claude)
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
+
 # Nome do modelo padrão (estável e moderno)
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = "gemini-3.1-flash-lite-preview"
+CLAUDE_MODEL = "claude-sonnet-4-20250514"
 EMBEDDING_MODEL = "text-embedding-3-small" # 1536 dimensões
 
 def is_retryable_error(exception):
@@ -81,6 +87,50 @@ def call_ai_with_json_retry(system_instruction, user_prompt, model_name=MODEL_NA
         except Exception as e:
             # Outros erros (como de rede/quota) já são tratados pelo decorador de retry
             raise e
+
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=3, max=30),
+    retry=retry_if_exception(is_retryable_error),
+    reraise=True
+)
+def call_claude(system_instruction, user_prompt, model_name=CLAUDE_MODEL):
+    """
+    Realiza uma chamada para o Claude (Anthropic) e retorna JSON parseado.
+    Usado para geração de mensagens humanizadas.
+    """
+    if not claude_client:
+        raise RuntimeError("[CLAUDE] ANTHROPIC_API_KEY não configurada no .env")
+
+    try:
+        print(f"[CLAUDE] Gerando resposta com {model_name}...")
+        response = claude_client.messages.create(
+            model=model_name,
+            max_tokens=1024,
+            system=system_instruction,
+            messages=[{"role": "user", "content": user_prompt}]
+        )
+
+        raw_res = response.content[0].text.strip()
+
+        # Limpa possíveis invólucros de markdown
+        if raw_res.startswith("```json"):
+            raw_res = raw_res.replace("```json", "", 1).replace("```", "", 1).strip()
+        if raw_res.startswith("```"):
+            raw_res = raw_res.replace("```", "", 1).rsplit("```", 1)[0].strip()
+
+        print("[CLAUDE] Resposta processada com sucesso.")
+        return json.loads(raw_res)
+
+    except json.JSONDecodeError as e:
+        print(f"[CLAUDE CRITICAL] Falha no parse JSON: {raw_res[:300]}")
+        raise e
+    except Exception as e:
+        if is_retryable_error(e):
+            print(f"[CLAUDE] Erro retentável: {e}")
+        else:
+            print(f"[CLAUDE ERROR] Falha: {e}")
+        raise e
 
 def get_embedding(text, model=EMBEDDING_MODEL):
     """

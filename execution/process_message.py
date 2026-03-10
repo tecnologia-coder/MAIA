@@ -113,33 +113,39 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
         print(f"[TRIAGEM HEURÍSTICA] Ignorado: Sem intenção de pedido ('{message_text}')")
         return None, "Ignorado pela heurística: Ausência de intenção de pedido."
         
-    # 3. RECUPERAR MEMÓRIA E CLASSIFICAR
+    # 3. RECUPERAR MEMÓRIA, CLASSIFICAR E CATEGORIZAR (Chamada Unificada)
     # Puxa as últimas interações da n8n_chat_histories para passar contexto à IA
     chat_history = get_chat_history(real_user_phone, limit=5)
     memory_context = f"\n[HISTÓRICO RECENTE DA CONVERSA]\n{chat_history}" if chat_history else ""
 
     try:
-        class_instr = load_directive("classification_directive.md")
-        class_prompt = f"{message_text}{memory_context}"
-        class_res = call_ai_with_json_retry(class_instr, class_prompt)
+        triage_instr = load_directive("triage_directive.md")
+        metadata_context = get_metadata()
+        triage_prompt = f"Categorias reais disponíveis:\n{json.dumps(metadata_context)}\n\nMensagem do Usuário: {message_text}{memory_context}"
+        triage_res = call_ai_with_json_retry(triage_instr, triage_prompt)
         
         # 4. DECISÃO DE FLUXO (Python)
-        is_valid = class_res.get("is_valid_request")
-        confidence = class_res.get("confidence", 0)
+        is_valid = triage_res.get("is_valid_request")
+        confidence = triage_res.get("confidence", 0)
         
         # Regra de Confiança: Abortar se < 0.80
         if not is_valid or confidence < CONFIDENCE_THRESHOLD:
-            reason = class_res.get("reason", "Incerteza na classificação.")
+            reason = triage_res.get("reason", "Incerteza na classificação.")
             print(f"[TRIAGEM] Pedido recusado. Confidence: {confidence}. Motivo: {reason}")
             return None, reason
+        
+        # Extrair categorização da mesma resposta
+        pedido_cat = triage_res.get("pedido_categoria")
+        pedido_sub = triage_res.get("pedido_subcategoria")
+        pedido_desc = triage_res.get("pedido_descricao")
             
     except Exception as e:
-        print(f"[ERRO] Falha técnica na classificação: {e}")
+        print(f"[ERRO] Falha técnica na triagem unificada: {e}")
         return None, "Erro técnico na triagem."
 
-    print(f"\n[DEBUG] Pedido Válido (Confiança: {confidence}). Registrando inicialmente...")
+    print(f"\n[DEBUG] Pedido Válido (Confiança: {confidence}). Cat: {pedido_cat} | Sub: {pedido_sub}")
     
-    # 4.5 REGISTRO INICIAL DO PEDIDO (Registro bruto conforme pedido pelo usuário)
+    # 4.5 REGISTRO INICIAL DO PEDIDO (com categorização já inclusa)
     pedido_id = None
     try:
         pedido_db_data = {
@@ -147,38 +153,16 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
             "pedido_grupo": group_id, 
             "profile": profile_id,
             "pedido_por": {"nome": sender_name or "Usuária", "telefone": real_user_phone},
-            "recomendacao_feita": False
+            "recomendacao_feita": False,
+            "pedido_categoria": pedido_cat,
+            "pedido_subcategoria": pedido_sub,
+            "pedido_descricao": pedido_desc
         }
         pedido_record = record_pedido(pedido_db_data)
         pedido_id = pedido_record["id"] if pedido_record else None
-        print(f"[DEBUG] Registro Inicial realizado. ID: {pedido_id}")
+        print(f"[DEBUG] Registro realizado com categorização. ID: {pedido_id}")
     except Exception as e:
-        print(f"[AVISO] Falha ao registrar pedido inicial: {e}")
-
-    # 5. CATEGORIZAÇÃO
-    try:
-        cat_instr = load_directive("categorization_directive.md")
-        metadata_context = get_metadata()
-        cat_prompt = f"Categorias reais disponíveis:\n{json.dumps(metadata_context)}\n\nPedido do Usuário: {message_text}{memory_context}"
-        cat_res = call_ai_with_json_retry(cat_instr, cat_prompt)
-        
-        pedido_cat = cat_res.get("pedido_categoria")
-        pedido_sub = cat_res.get("pedido_subcategoria")
-        pedido_desc = cat_res.get("pedido_descricao")
-
-        # 5.5 ATUALIZAÇÃO DO PEDIDO COM CATEGORIZAÇÃO
-        if pedido_id:
-            update_data = {
-                "pedido_categoria": pedido_cat,
-                "pedido_subcategoria": pedido_sub,
-                "pedido_descricao": pedido_desc
-            }
-            update_pedido(pedido_id, update_data)
-            print(f"[DEBUG] Registro {pedido_id} atualizado com categorização: {pedido_cat}/{pedido_sub}")
-
-    except Exception as e:
-        print(f"[ERRO] Falha na categorização: {e}")
-        return None, "Erro técnico na categorização."
+        print(f"[AVISO] Falha ao registrar pedido: {e}")
 
     # 6. MATCH DE FORNECEDORES (Deterministic Search + LLM Validation)
     valid_suppliers = []
@@ -337,7 +321,7 @@ Fornecedores selecionados para recomendar:
              send_zapi_message(target_phone, mensagem_final)
 
         # 10.1 REPLICAR MENSAGEM NO GRUPO DE COORDENAÇÃO
-        GRUPO_COORDENACAO_ZAPI = "120363422760214316@g.us"
+        GRUPO_COORDENACAO_ZAPI = "120363422760214316-group"
         try:
             send_zapi_message(GRUPO_COORDENACAO_ZAPI, mensagem_final)
             print(f"[ORQUESTRAÇÃO] Mensagem replicada no grupo de coordenação.")

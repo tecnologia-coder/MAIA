@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/pip install python-dotenv)",
+      "Bash(.venv/Scripts/python.exe -m pip install -r requirements.txt)"
+    ]
+  }
+}

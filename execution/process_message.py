@@ -181,12 +181,13 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
 
     # 6. MATCH DE FORNECEDORES (Agentic Flow - Tool Calling)
     valid_suppliers = []
+    max_agent_attempts = 2
     try:
         from execution.ai_client import call_ai_agent
         from execution.agent_tools import agentic_tools
-        
+
         match_instr = load_directive("supplier_match_directive.md")
-        
+
         # O prompt precisa passar o contexto completo para que a LLM saiba o que executar
         agent_prompt = f"""
 Pedido original do usuário: {message_text}
@@ -199,13 +200,21 @@ Contexto processado:
 
 USE AS FERRAMENTAS DISPONÍVEIS para cumprir seu objetivo de recomendação conforme a diretriz.
 """
-        print("[ORQUESTRAÇÃO] Transferindo controle para o Agente MAIA (Match)...")
-        agent_res = call_ai_agent(match_instr, agent_prompt, tools=agentic_tools)
-        
-        valid_suppliers = agent_res.get("recomendacoes", [])
-        print(f"[ORQUESTRAÇÃO] O Agente retornou {len(valid_suppliers)} fornecedores validados.")
+        for attempt in range(1, max_agent_attempts + 1):
+            print(f"[ORQUESTRAÇÃO] Transferindo controle para o Agente MAIA (Match) - Tentativa {attempt}/{max_agent_attempts}...")
+            agent_res = call_ai_agent(match_instr, agent_prompt, tools=agentic_tools)
+
+            valid_suppliers = agent_res.get("recomendacoes", [])
+            print(f"[ORQUESTRAÇÃO] O Agente retornou {len(valid_suppliers)} fornecedores validados.")
+
+            if valid_suppliers:
+                break
+            elif attempt < max_agent_attempts:
+                print("[ORQUESTRAÇÃO] Agente retornou vazio. Realizando retry...")
     except Exception as e:
-        print(f"[ERRO] Falha no fluxo agêntico de recomendação: {e}")
+        print(f"[ERRO] Falha no fluxo agêntico de recomendação: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         valid_suppliers = []
 
     # 9. GERAÇÃO DE RESPOSTA E FLUXO SILENCIOSO

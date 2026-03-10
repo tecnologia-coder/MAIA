@@ -155,6 +155,7 @@ def call_ai_agent(system_instruction, user_prompt, tools, model_name=MODEL_NAME)
 
     except json.JSONDecodeError as e:
         print(f"[AI_AGENT CRITICAL] Falha no parse JSON final retornado pelo Agente.")
+        print(f"[AI_AGENT CRITICAL] Raw response: {raw_res[:500]}")
         raise e
     except Exception as e:
         if is_quota_error(e):

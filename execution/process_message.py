@@ -179,44 +179,63 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
         print(f"[ERRO] Falha na categorização: {e}")
         return None, "Erro técnico na categorização."
 
-    # 6. MATCH DE FORNECEDORES (Agentic Flow - Tool Calling)
+    # 6. MATCH DE FORNECEDORES (Deterministic Search + LLM Validation)
     valid_suppliers = []
-    max_agent_attempts = 2
-    from execution.ai_client import call_ai_agent
-    from execution.agent_tools import agentic_tools
+    try:
+        from execution.agent_tools import get_categoria, get_subcategoria, link_fornecedor
+        from execution.search_suppliers import search_suppliers_by_text
 
-    match_instr = load_directive("supplier_match_directive.md")
+        # 6.1 Resolve nomes de categoria/subcategoria (determinístico)
+        cat_name = get_categoria(pedido_cat) or "Desconhecida"
+        sub_name = get_subcategoria(pedido_sub) or "Desconhecida"
+        print(f"[ORQUESTRAÇÃO] Categoria: {cat_name} | Subcategoria: {sub_name}")
 
-    # O prompt precisa passar o contexto completo para que a LLM saiba o que executar
-    agent_prompt = f"""
-Pedido original do usuário: {message_text}
+        # 6.2 Busca vetorial (determinístico)
+        search_query = f"{cat_name} {sub_name} - {pedido_desc} {message_text}"
+        print(f"[ORQUESTRAÇÃO] Query de busca: '{search_query}'")
+        candidates = search_suppliers_by_text(search_query)
+        print(f"[ORQUESTRAÇÃO] Busca vetorial retornou {len(candidates)} candidatos.")
+
+        if candidates:
+            # 6.3 Enriquece candidatos com link de contato (determinístico)
+            for c in candidates:
+                fid = c.get("metadata", {}).get("id")
+                if fid:
+                    link_data = json.loads(link_fornecedor(fid))
+                    c["whatsapp_link"] = link_data.get("whatsapp_link")
+                    c["status_parceiro"] = link_data.get("status")
+
+            # 6.4 Validação pela LLM (chamada simples, sem tool calling)
+            match_instr = load_directive("supplier_match_directive.md")
+            validation_prompt = f"""Pedido original do usuário: {message_text}
 {memory_context}
 
 Contexto processado:
-- Categoria ID: {pedido_cat}
-- Subcategoria ID: {pedido_sub}
-- Descrição da IA de triagem: {pedido_desc}
+- Categoria: {cat_name} (ID: {pedido_cat})
+- Subcategoria: {sub_name} (ID: {pedido_sub})
+- Descrição: {pedido_desc}
 
-USE AS FERRAMENTAS DISPONÍVEIS para cumprir seu objetivo de recomendação conforme a diretriz.
-"""
-    for attempt in range(1, max_agent_attempts + 1):
-        try:
-            print(f"[ORQUESTRAÇÃO] Transferindo controle para o Agente MAIA (Match) - Tentativa {attempt}/{max_agent_attempts}...")
-            agent_res = call_ai_agent(match_instr, agent_prompt, tools=agentic_tools)
+CANDIDATOS RETORNADOS PELA BUSCA VETORIAL (já executada):
+{json.dumps(candidates, ensure_ascii=False)}
 
-            valid_suppliers = agent_res.get("recomendacoes", [])
-            print(f"[ORQUESTRAÇÃO] O Agente retornou {len(valid_suppliers)} fornecedores validados.")
+IMPORTANTE: A busca vetorial e a recuperação de links JÁ FORAM EXECUTADAS acima.
+Sua tarefa é APENAS validar quais candidatos atendem ao pedido e retornar o JSON final.
+NÃO tente chamar ferramentas — os dados já estão disponíveis acima.
+Para cada fornecedor recomendado, use o whatsapp_link já presente nos dados do candidato."""
 
-            if valid_suppliers:
-                break
-            elif attempt < max_agent_attempts:
-                print("[ORQUESTRAÇÃO] Agente retornou vazio. Realizando retry...")
-        except Exception as e:
-            print(f"[ERRO] Falha no fluxo agêntico (tentativa {attempt}/{max_agent_attempts}): {type(e).__name__}: {e}")
-            if attempt == max_agent_attempts:
-                import traceback
-                traceback.print_exc()
-            valid_suppliers = []
+            print("[ORQUESTRAÇÃO] Enviando candidatos para validação pela LLM...")
+            validation_res = call_ai_with_json_retry(match_instr, validation_prompt)
+
+            valid_suppliers = validation_res.get("recomendacoes", [])
+            print(f"[ORQUESTRAÇÃO] LLM validou {len(valid_suppliers)} fornecedores.")
+        else:
+            print("[ORQUESTRAÇÃO] Busca vetorial não retornou candidatos.")
+
+    except Exception as e:
+        print(f"[ERRO] Falha no fluxo de recomendação: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        valid_suppliers = []
 
     # 9. GERAÇÃO DE RESPOSTA E FLUXO SILENCIOSO
     if not valid_suppliers:

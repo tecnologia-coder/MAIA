@@ -72,12 +72,13 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
     
     # Tratamento do ID do Grupo: Z-API envia '@g.us', mas o painel/banco salva como '-group'
     group_id = None
+    group_name = None
     if chat_id:
         if "@g.us" in str(chat_id):
             formatted_chat_id = str(chat_id).replace("@g.us", "-group")
-            group_id = get_group(formatted_chat_id)
+            group_id, group_name = get_group(formatted_chat_id)
         elif "-group" in str(chat_id): # Fallback caso a API mude no futuro
-            group_id = get_group(chat_id)
+            group_id, group_name = get_group(chat_id)
 
     # 2.5 LOG DE AUDITORIA (Registro de todas as mensagens recebidas)
     try:
@@ -270,7 +271,28 @@ Retorne SOMENTE um JSON válido com a chave "motivo_tecnico".'''
         resp_instr = load_directive("response_generation_directive.md")
         
         final_instr = f"{persona_instr}\n\n{resp_instr}"
-        final_prompt = f"Lista de Fornecedores Selecionados:\n{json.dumps(valid_suppliers)}\n\nPedido original: {message_text}"
+
+        # Contexto rico para personalização da mensagem
+        user_first_name = (sender_name or "").split()[0] if sender_name else ""
+        group_context = f"A mensagem foi enviada no grupo \"{group_name}\"." if group_name else "A mensagem foi enviada no privado."
+
+        final_prompt = f"""Dados para personalização:
+- Nome da usuária: {user_first_name or 'não informado'}
+- {group_context}
+- Pedido original da usuária: "{message_text}"
+- Descrição processada do pedido: {pedido_desc}
+- Categoria: {cat_name}
+- Subcategoria: {sub_name}
+
+ESTRUTURA OBRIGATÓRIA DA MENSAGEM (siga TODOS os 5 blocos, nenhum pode ser pulado):
+1. Saudação com o nome da usuária
+2. Contexto do pedido com empatia (reformule o que ela pediu com suas palavras, mencione o grupo "{group_name}" se houver)
+3. Transição natural para os achados ("encontrei...", "separei pra você...")
+4. Lista dos fornecedores com descrição aprofundada de cada um (2-3 frases por fornecedor, conectando o serviço com a necessidade específica da usuária)
+5. CTA convidando a clicar no botão para falar com o parceiro de preferência
+
+Fornecedores selecionados para recomendar:
+{json.dumps(valid_suppliers, ensure_ascii=False)}"""
         
         # Usa Claude para geração humanizada; fallback para Gemini se chave não configurada
         try:

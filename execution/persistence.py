@@ -22,17 +22,17 @@ def get_or_create_profile(phone, name="Usuária"):
 def get_group(group_id):
     """
     Verifica se o grupo está registrado na tabela 'grupos'.
-    Retorna o ID interno se existir, ou None se não encontrar.
+    Retorna tupla (id_interno, nome_do_grupo) se existir, ou (None, None).
     """
     supabase = get_supabase_client()
     try:
-        res = supabase.table("grupos").select("id").eq("grupo_id", group_id).execute()
+        res = supabase.table("grupos").select("id, grupo_nome").eq("grupo_id", group_id).execute()
         if res.data:
-            return res.data[0]["id"]
-        return None
+            return res.data[0]["id"], res.data[0].get("grupo_nome")
+        return None, None
     except Exception as e:
         print(f"[PERSISTENCE] Erro ao buscar grupo: {e}")
-        return None
+        return None, None
 
 def record_pedido(data):
     """

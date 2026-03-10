@@ -23,7 +23,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
 # Nome do modelo padrão (estável e moderno)
-MODEL_NAME = "gemini-3.1-flash-lite-preview"
+MODEL_NAME = "gemini-2.0-flash"
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 EMBEDDING_MODEL = "text-embedding-3-small" # 1536 dimensões
 

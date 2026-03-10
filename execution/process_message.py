@@ -335,6 +335,14 @@ Fornecedores selecionados para recomendar:
             send_zapi_button_actions(target_phone, mensagem_final, button_actions)
         else:
              send_zapi_message(target_phone, mensagem_final)
+
+        # 10.1 REPLICAR MENSAGEM NO GRUPO DE COORDENAÇÃO
+        GRUPO_COORDENACAO_ZAPI = "120363422760214316@g.us"
+        try:
+            send_zapi_message(GRUPO_COORDENACAO_ZAPI, mensagem_final)
+            print(f"[ORQUESTRAÇÃO] Mensagem replicada no grupo de coordenação.")
+        except Exception as e:
+            print(f"[AVISO] Falha ao enviar para o grupo de coordenação: {e}")
              
     # Atualizando status do pedido indicando que o ciclo encerrou (com sucesso)
     if pedido_id:

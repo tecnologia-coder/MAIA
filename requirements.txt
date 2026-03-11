@@ -7,3 +7,4 @@ requests
 tenacity
 openai
 anthropic
+apscheduler

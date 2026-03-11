@@ -1,9 +1,29 @@
 from fastapi import FastAPI, Request, BackgroundTasks
+from contextlib import asynccontextmanager
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from execution.process_message import process_whatsapp_message_e2e
+from execution.daily_report import send_daily_report
 import uvicorn
 import os
 
-app = FastAPI(title="MAIA WhatsApp Webhook")
+# --- Scheduler: Relatório diário às 10h (Brasília, UTC-3) ---
+scheduler = BackgroundScheduler()
+scheduler.add_job(
+    send_daily_report,
+    trigger=CronTrigger(hour=10, minute=0, timezone="America/Sao_Paulo"),
+    id="daily_telemetry_report",
+    replace_existing=True
+)
+
+@asynccontextmanager
+async def lifespan(app):
+    scheduler.start()
+    print("[SCHEDULER] Relatório diário agendado para 10:00 (Brasília).")
+    yield
+    scheduler.shutdown()
+
+app = FastAPI(title="MAIA WhatsApp Webhook", lifespan=lifespan)
 
 @app.get("/")
 def health_check():

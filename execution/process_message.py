@@ -1,19 +1,21 @@
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from execution.zapi_client import send_zapi_message, send_zapi_button_actions
-from execution.ai_client import call_ai_with_json_retry, call_claude, load_directive
+from execution.ai_client import call_ai_with_json_retry, call_claude, load_directive, set_telemetry_stage, collect_and_reset_tokens
 from execution.search_suppliers import search_suppliers_by_text
 from execution.get_metadata import get_metadata
 from execution.persistence import (
-    get_or_create_profile, 
-    get_group, 
-    record_pedido, 
+    get_or_create_profile,
+    get_group,
+    record_pedido,
     update_pedido,
     record_recomendacao,
     record_mensagem,
     record_pedido_sem_fornecedor,
+    record_telemetria,
     get_chat_history,
     save_to_chat_history
 )
@@ -21,6 +23,16 @@ from execution.persistence import (
 # --- Configurações e Thresholds ---
 CONFIDENCE_THRESHOLD = 0.80
 SIMILARITY_THRESHOLD = 0.60
+GRUPO_COORDENACAO = "120363422760214316-group"
+
+
+def _log_grupo(titulo, detalhes):
+    """Envia log formatado para o grupo de coordenação. Nunca quebra o fluxo."""
+    try:
+        msg = f"*[MAIA LOG] {titulo}*\n{detalhes}"
+        send_zapi_message(GRUPO_COORDENACAO, msg)
+    except Exception as e:
+        print(f"[LOG GRUPO] Falha ao enviar log: {e}")
 
 def validate_supplier_2_3_rule(supplier, pedido_subcategoria_id, pedido_texto, metadata_context):
     """
@@ -58,11 +70,41 @@ def validate_supplier_2_3_rule(supplier, pedido_subcategoria_id, pedido_texto, m
         
     return matches >= 2
 
+def _save_telemetria(telemetry_data):
+    """Grava telemetria de forma segura (nunca quebra o fluxo principal)."""
+    try:
+        tokens = collect_and_reset_tokens()
+        telemetry_data["tokens_triagem"] = tokens.get("triagem", 0)
+        telemetry_data["tokens_validacao"] = tokens.get("validacao", 0)
+        telemetry_data["tokens_resposta"] = tokens.get("resposta", 0)
+        telemetry_data["tokens_total"] = sum(tokens.values())
+        telemetry_data["tempo_total_ms"] = int((time.time() - telemetry_data.pop("_start_time", time.time())) * 1000)
+        record_telemetria(telemetry_data)
+    except Exception as e:
+        print(f"[TELEMETRIA] Erro ao gravar (não-crítico): {e}")
+
 def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, sender_name=None, target_phone=None, real_user_phone=None):
     """
     Orquestrador Oficial MAIA - Seguindo as 10 etapas da system_architecture_directive.
     """
-    
+    # Inicializa contexto de telemetria
+    t_start = time.time()
+    collect_and_reset_tokens()  # Limpa acumulador de execuções anteriores
+    tel = {
+        "_start_time": t_start,
+        "sender_name": sender_name or "Desconhecido",
+        "sender_phone": real_user_phone or "",
+        "message_text": message_text,
+        "group_name": None,
+        "etapa_final": "inicio",
+        "confidence": None,
+        "categoria": None,
+        "subcategoria": None,
+        "candidatos_encontrados": 0,
+        "fornecedores_validados": 0,
+        "resposta_final": None,
+    }
+
     # 1. WEBHOOK / 2. TRIAGEM (Filtros Iniciais)
     if is_from_me:
         return None, "Mensagem própria ignorada pelo sistema."
@@ -106,14 +148,22 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
     # Regra 1: Mensagens muito curtas (geralmente saudações, sim/não, emojis)
     if len(message_text.strip().split()) <= 2:
         print(f"[TRIAGEM HEURÍSTICA] Ignorado: Mensagem muito curta ('{message_text}')")
+        tel["etapa_final"] = "heuristica_curta"
+        _save_telemetria(tel)
         return None, "Ignorado pela heurística: Mensagem muito curta."
-        
+
     # Regra 2: Ausência de palavras de intenção de busca/pedido
     if not any(keyword in msg_lower for keyword in intent_keywords):
         print(f"[TRIAGEM HEURÍSTICA] Ignorado: Sem intenção de pedido ('{message_text}')")
+        tel["etapa_final"] = "heuristica_sem_intencao"
+        _save_telemetria(tel)
         return None, "Ignorado pela heurística: Ausência de intenção de pedido."
         
+    # Atualiza telemetria com nome do grupo (se resolvido)
+    tel["group_name"] = group_name
+
     # 3. RECUPERAR MEMÓRIA, CLASSIFICAR E CATEGORIZAR (Chamada Unificada)
+    set_telemetry_stage("triagem")
     # Puxa as últimas interações da n8n_chat_histories para passar contexto à IA
     chat_history = get_chat_history(real_user_phone, limit=5)
     memory_context = f"\n[HISTÓRICO RECENTE DA CONVERSA]\n{chat_history}" if chat_history else ""
@@ -132,6 +182,9 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
         if not is_valid or confidence < CONFIDENCE_THRESHOLD:
             reason = triage_res.get("reason", "Incerteza na classificação.")
             print(f"[TRIAGEM] Pedido recusado. Confidence: {confidence}. Motivo: {reason}")
+            tel["etapa_final"] = "triagem_rejeitada"
+            tel["confidence"] = confidence
+            _save_telemetria(tel)
             return None, reason
         
         # Extrair categorização da mesma resposta
@@ -141,10 +194,21 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
             
     except Exception as e:
         print(f"[ERRO] Falha técnica na triagem unificada: {e}")
+        tel["etapa_final"] = "erro_triagem"
+        _save_telemetria(tel)
         return None, "Erro técnico na triagem."
 
     print(f"\n[DEBUG] Pedido Válido (Confiança: {confidence}). Cat: {pedido_cat} | Sub: {pedido_sub}")
-    
+
+    _log_grupo("Novo pedido recebido", (
+        f"De: *{sender_name or 'Desconhecido'}* ({real_user_phone or '?'})\n"
+        f"Grupo: {group_name or 'Privado'}\n"
+        f"Mensagem: _{message_text}_\n"
+        f"Confiança: {confidence}\n"
+        f"Categoria: {pedido_cat} | Sub: {pedido_sub}\n"
+        f"Descrição: {pedido_desc}"
+    ))
+
     # 4.5 REGISTRO INICIAL DO PEDIDO (com categorização já inclusa)
     pedido_id = None
     try:
@@ -164,7 +228,13 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
     except Exception as e:
         print(f"[AVISO] Falha ao registrar pedido: {e}")
 
+    # Atualiza telemetria com dados da triagem
+    tel["confidence"] = confidence
+    tel["categoria"] = str(pedido_cat)
+    tel["subcategoria"] = str(pedido_sub)
+
     # 6. MATCH DE FORNECEDORES (Deterministic Search + LLM Validation)
+    set_telemetry_stage("validacao")
     valid_suppliers = []
     try:
         from execution.agent_tools import get_categoria, get_subcategoria, link_fornecedor
@@ -212,6 +282,8 @@ Para cada fornecedor recomendado, use o whatsapp_link já presente nos dados do 
             validation_res = call_ai_with_json_retry(match_instr, validation_prompt)
 
             valid_suppliers = validation_res.get("recomendacoes", [])
+            tel["candidatos_encontrados"] = len(candidates)
+            tel["fornecedores_validados"] = len(valid_suppliers)
             print(f"[ORQUESTRAÇÃO] LLM validou {len(valid_suppliers)} fornecedores.")
         else:
             print("[ORQUESTRAÇÃO] Busca vetorial não retornou candidatos.")
@@ -242,14 +314,24 @@ Retorne SOMENTE um JSON válido com a chave "motivo_tecnico".'''
                     "contato": profile_id,
                     "motivo": motivo_falha
                 })
-                
+
+                _log_grupo("Pedido SEM fornecedor", (
+                    f"De: *{sender_name or 'Desconhecido'}* ({real_user_phone or '?'})\n"
+                    f"Grupo: {group_name or 'Privado'}\n"
+                    f"Pedido: _{message_text}_\n"
+                    f"Motivo: {motivo_falha}"
+                ))
+
                 # Atualizando status do pedido indicando que o ciclo encerrou (sem successo)
                 update_pedido(pedido_id, {"recomendacao_feita": True})
             except Exception as e:
                 print(f"[ERRO] Falha ao registrar log de pedido_sem_fornecedor: {e}")
                 
+        tel["etapa_final"] = "sem_fornecedor"
+        _save_telemetria(tel)
         return {"status": "silenced", "reason": "Nenhum fornecedor encontrado"}, None
 
+    set_telemetry_stage("resposta")
     try:
         persona_instr = load_directive("persona_directive.md")
         resp_instr = load_directive("response_generation_directive.md")
@@ -326,12 +408,21 @@ Fornecedores selecionados para recomendar:
             send_zapi_message(target_phone, mensagem_final)
 
         # 10.1 REPLICAR MENSAGEM NO GRUPO DE COORDENAÇÃO
-        GRUPO_COORDENACAO_ZAPI = "120363422760214316-group"
         try:
+            tempo_s = time.time() - t_start
+            log_header = (
+                f"*[MAIA LOG] Indicação enviada*\n"
+                f"De: *{sender_name or 'Desconhecido'}* ({real_user_phone or '?'})\n"
+                f"Grupo: {group_name or 'Privado'}\n"
+                f"Pedido: _{message_text}_\n"
+                f"Fornecedores: {len(valid_suppliers)} | Tempo: {tempo_s:.1f}s\n"
+                f"---\n"
+            )
+            full_msg = log_header + mensagem_final
             if button_actions:
-                send_zapi_button_actions(GRUPO_COORDENACAO_ZAPI, mensagem_final, button_actions)
+                send_zapi_button_actions(GRUPO_COORDENACAO, full_msg, button_actions)
             else:
-                send_zapi_message(GRUPO_COORDENACAO_ZAPI, mensagem_final)
+                send_zapi_message(GRUPO_COORDENACAO, full_msg)
             print(f"[ORQUESTRAÇÃO] Mensagem replicada no grupo de coordenação.")
         except Exception as e:
             print(f"[AVISO] Falha ao enviar para o grupo de coordenação: {e}")
@@ -343,7 +434,12 @@ Fornecedores selecionados para recomendar:
     # Salvar Interação no Histórico de Longo Prazo
     if real_user_phone:
         save_to_chat_history(real_user_phone, human_text=message_text, ai_text=mensagem_final)
-            
+
+    # Gravar telemetria de sucesso
+    tel["etapa_final"] = "sucesso"
+    tel["resposta_final"] = mensagem_final
+    _save_telemetria(tel)
+
     return {"mensagem_final": mensagem_final}, None
 
 

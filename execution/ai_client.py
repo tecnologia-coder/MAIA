@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import threading
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from google import genai
 from google.genai import types
@@ -9,6 +10,31 @@ import anthropic
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# --- Acumulador de Tokens (thread-safe) ---
+# Cada chamada de LLM alimenta esse acumulador silenciosamente.
+# O process_message.py coleta e reseta no final de cada execução.
+_token_lock = threading.Lock()
+_token_accumulator = {"triagem": 0, "validacao": 0, "resposta": 0, "outros": 0}
+_current_stage = "outros"
+
+def set_telemetry_stage(stage: str):
+    """Define a etapa atual para atribuir tokens corretamente."""
+    global _current_stage
+    _current_stage = stage
+
+def _accumulate_tokens(count: int):
+    """Adiciona tokens ao acumulador na etapa atual."""
+    with _token_lock:
+        _token_accumulator[_current_stage] = _token_accumulator.get(_current_stage, 0) + count
+
+def collect_and_reset_tokens() -> dict:
+    """Coleta os tokens acumulados e reseta o acumulador. Retorna cópia."""
+    with _token_lock:
+        snapshot = dict(_token_accumulator)
+        for k in _token_accumulator:
+            _token_accumulator[k] = 0
+    return snapshot
 
 # Configuração da API Google
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
@@ -52,7 +78,16 @@ def call_gemini(system_instruction, user_prompt, model_name=MODEL_NAME, json_mod
             contents=user_prompt,
             config=config
         )
-        
+
+        # Acumula tokens de uso (Gemini expõe usage_metadata)
+        try:
+            usage = response.usage_metadata
+            if usage:
+                total = (usage.prompt_token_count or 0) + (usage.candidates_token_count or 0)
+                _accumulate_tokens(total)
+        except Exception:
+            pass
+
         return response.text
     except Exception as e:
         if is_retryable_error(e):
@@ -110,6 +145,15 @@ def call_claude(system_instruction, user_prompt, model_name=CLAUDE_MODEL):
             system=system_instruction,
             messages=[{"role": "user", "content": user_prompt}]
         )
+
+        # Acumula tokens de uso (Claude expõe usage)
+        try:
+            usage = response.usage
+            if usage:
+                total = (usage.input_tokens or 0) + (usage.output_tokens or 0)
+                _accumulate_tokens(total)
+        except Exception:
+            pass
 
         raw_res = response.content[0].text.strip()
 

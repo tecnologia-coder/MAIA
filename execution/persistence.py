@@ -125,6 +125,23 @@ def get_chat_history(session_id, limit=6):
         print(f"[PERSISTENCE] Erro ao buscar histórico de chat: {e}")
         return ""
 
+def record_telemetria(data):
+    """
+    Registra métricas de telemetria na tabela 'telemetria'.
+    Campos: sender_name, sender_phone, message_text, group_name,
+            etapa_final, confidence, categoria, subcategoria,
+            candidatos_encontrados, fornecedores_validados,
+            tokens_triagem, tokens_validacao, tokens_resposta, tokens_total,
+            tempo_total_ms, resposta_final
+    """
+    supabase = get_supabase_client()
+    try:
+        res = supabase.table("telemetria").insert(data).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        print(f"[TELEMETRIA] Erro ao registrar telemetria: {e}")
+        return None
+
 def save_to_chat_history(session_id, human_text=None, ai_text=None):
     """
     Salva a mensagem do usuário e/ou a resposta da IA na tabela n8n_chat_histories.

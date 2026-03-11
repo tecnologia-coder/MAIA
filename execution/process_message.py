@@ -23,14 +23,15 @@ from execution.persistence import (
 # --- Configurações e Thresholds ---
 CONFIDENCE_THRESHOLD = 0.80
 SIMILARITY_THRESHOLD = 0.60
-GRUPO_COORDENACAO = "120363422760214316-group"
+GRUPO_INDICACOES = "120363422760214316-group"
+GRUPO_SYSTEM_LOGS = "120363406702749765-group"
 
 
-def _log_grupo(titulo, detalhes):
-    """Envia log formatado para o grupo de coordenação. Nunca quebra o fluxo."""
+def _log_sistema(titulo, detalhes):
+    """Envia log de sistema para o grupo System Logs. Nunca quebra o fluxo."""
     try:
         msg = f"*[MAIA LOG] {titulo}*\n{detalhes}"
-        send_zapi_message(GRUPO_COORDENACAO, msg)
+        send_zapi_message(GRUPO_SYSTEM_LOGS, msg)
     except Exception as e:
         print(f"[LOG GRUPO] Falha ao enviar log: {e}")
 
@@ -200,7 +201,7 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
 
     print(f"\n[DEBUG] Pedido Válido (Confiança: {confidence}). Cat: {pedido_cat} | Sub: {pedido_sub}")
 
-    _log_grupo("Novo pedido recebido", (
+    _log_sistema("Novo pedido recebido", (
         f"De: *{sender_name or 'Desconhecido'}* ({real_user_phone or '?'})\n"
         f"Grupo: {group_name or 'Privado'}\n"
         f"Mensagem: _{message_text}_\n"
@@ -315,7 +316,7 @@ Retorne SOMENTE um JSON válido com a chave "motivo_tecnico".'''
                     "motivo": motivo_falha
                 })
 
-                _log_grupo("Pedido SEM fornecedor", (
+                _log_sistema("Pedido SEM fornecedor", (
                     f"De: *{sender_name or 'Desconhecido'}* ({real_user_phone or '?'})\n"
                     f"Grupo: {group_name or 'Privado'}\n"
                     f"Pedido: _{message_text}_\n"
@@ -407,25 +408,23 @@ Fornecedores selecionados para recomendar:
         else:
             send_zapi_message(target_phone, mensagem_final)
 
-        # 10.1 REPLICAR MENSAGEM NO GRUPO DE COORDENAÇÃO
+        # 10.1 REPLICAR INDICAÇÃO NO GRUPO MAIA INDICAÇÕES (como a usuária recebe)
         try:
-            tempo_s = time.time() - t_start
-            log_header = (
-                f"*[MAIA LOG] Indicação enviada*\n"
-                f"De: *{sender_name or 'Desconhecido'}* ({real_user_phone or '?'})\n"
-                f"Grupo: {group_name or 'Privado'}\n"
-                f"Pedido: _{message_text}_\n"
-                f"Fornecedores: {len(valid_suppliers)} | Tempo: {tempo_s:.1f}s\n"
-                f"---\n"
-            )
-            full_msg = log_header + mensagem_final
             if button_actions:
-                send_zapi_button_actions(GRUPO_COORDENACAO, full_msg, button_actions)
+                send_zapi_button_actions(GRUPO_INDICACOES, mensagem_final, button_actions)
             else:
-                send_zapi_message(GRUPO_COORDENACAO, full_msg)
-            print(f"[ORQUESTRAÇÃO] Mensagem replicada no grupo de coordenação.")
+                send_zapi_message(GRUPO_INDICACOES, mensagem_final)
+            print(f"[ORQUESTRAÇÃO] Indicação replicada no grupo MAIA INDICAÇÕES.")
         except Exception as e:
-            print(f"[AVISO] Falha ao enviar para o grupo de coordenação: {e}")
+            print(f"[AVISO] Falha ao enviar para o grupo de indicações: {e}")
+
+        # 10.2 LOG DE SISTEMA (System Logs)
+        _log_sistema("Indicação enviada", (
+            f"De: *{sender_name or 'Desconhecido'}* ({real_user_phone or '?'})\n"
+            f"Grupo: {group_name or 'Privado'}\n"
+            f"Pedido: _{message_text}_\n"
+            f"Fornecedores: {len(valid_suppliers)} | Tempo: {time.time() - t_start:.1f}s"
+        ))
              
     # Atualizando status do pedido indicando que o ciclo encerrou (com sucesso)
     if pedido_id:

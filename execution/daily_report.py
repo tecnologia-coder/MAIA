@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from execution.supabase_client import get_supabase_client
 from execution.zapi_client import send_zapi_message
 
-GRUPO_TELEMETRIA = "120363422760214316-group"
+GRUPO_SYSTEM_LOGS = "120363406702749765-group"
 
 
 def fetch_last_24h():
@@ -113,8 +113,8 @@ def send_daily_report():
         print("[TELEMETRIA] Gerando relatório diário...")
         records = fetch_last_24h()
         report_text = build_report(records)
-        send_zapi_message(GRUPO_TELEMETRIA, report_text)
-        print(f"[TELEMETRIA] Relatório enviado para {GRUPO_TELEMETRIA}. {len(records)} registros.")
+        send_zapi_message(GRUPO_SYSTEM_LOGS, report_text)
+        print(f"[TELEMETRIA] Relatório enviado para {GRUPO_SYSTEM_LOGS}. {len(records)} registros.")
     except Exception as e:
         print(f"[TELEMETRIA] Erro ao enviar relatório diário: {e}")
 

@@ -45,24 +45,26 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
     participant_phone = body.get("participantPhone", "") # Quem enviou (em grupos)
     sender_name = body.get("senderName", "Usuária")
     
-    # Lógica de Direcionamento: 
-    # REGRAS DO USUÁRIO:
-    # 1. Ignorar se não for texto (já verificado via if not message_text)
-    # 2. Resposta sempre no privado de quem pediu a indicação
-    target_private_phone = participant_phone if participant_phone else phone
-    
+    # Lógica de Direcionamento:
+    # 1. Ignorar mensagens sem texto
+    # 2. Ignorar mensagens de conversas privadas — MAIA responde apenas em grupos
+    # 3. Resposta vai para o grupo de origem da mensagem
     if not message_text:
         print("[WEBHOOK] Mensagem recebida sem conteúdo de texto. Ignorando.")
         return {"status": "ignored", "reason": "No text content"}
 
+    if not participant_phone:
+        print("[WEBHOOK] Mensagem de conversa privada ignorada. MAIA opera apenas em grupos.")
+        return {"status": "ignored", "reason": "Private messages are not supported"}
+
     # Processamento em background
     background_tasks.add_task(
-        process_whatsapp_message_e2e, 
-        message_text, 
+        process_whatsapp_message_e2e,
+        message_text,
         is_from_me=is_from_me,
-        chat_id=phone, # ID de onde veio (para log de grupo)
+        chat_id=phone, # ID de onde veio (grupo de origem)
         sender_name=sender_name,
-        target_phone=target_private_phone, # Para onde a resposta deve ir (Sempre o privado do remetente)
+        target_phone=phone, # Resposta vai para o grupo de origem
         real_user_phone=participant_phone # Para gestão de perfil
     )
     

@@ -386,13 +386,13 @@ Fornecedores selecionados para recomendar:
         mensagem_final = "Oi! No momento tive um probleminha para gerar sua resposta, mas nossa equipe já foi avisada e vai te ajudar logo mais. 🙏"
 
     # 10. ENVIO WHATSAPP
-    if target_phone and mensagem_final:
+    if mensagem_final:
         # Monta botão único "Falar com parceiros" com IDs dos fornecedores na URL
         supplier_params = []
         for i, s in enumerate(valid_suppliers[:3]):
             fid = s.get("fornecedor_id", 0)
             supplier_params.append(f"supplier{i + 1}={fid}")
-        
+
         button_actions = []
         if supplier_params:
             partner_url = "https://maiahub.lovable.app/contato_fornecedor?" + "&".join(supplier_params)
@@ -401,12 +401,6 @@ Fornecedores selecionados para recomendar:
                 "label": "Falar com parceiros",
                 "url": partner_url
             }]
-
-        # Envio para a Usuária
-        if button_actions:
-            send_zapi_button_actions(target_phone, mensagem_final, button_actions)
-        else:
-            send_zapi_message(target_phone, mensagem_final)
 
         # 10.1 REPLICAR INDICAÇÃO NO GRUPO MAIA INDICAÇÕES (como a usuária recebe)
         try:

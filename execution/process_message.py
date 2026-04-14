@@ -2,17 +2,19 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from execution.zapi_client import send_zapi_message, send_zapi_button_actions
 from execution.ai_client import call_ai_with_json_retry, call_claude, load_directive, set_telemetry_stage, collect_and_reset_tokens
 from execution.search_suppliers import search_suppliers_by_text
 from execution.get_metadata import get_metadata
+from execution.fase_bebe import calcular_fase_bebe
 from execution.persistence import (
     get_or_create_profile,
     get_group,
     record_pedido,
     update_pedido,
     record_recomendacao,
+    update_recomendacao,
     record_mensagem,
     record_pedido_sem_fornecedor,
     record_telemetria,
@@ -34,6 +36,56 @@ def _log_sistema(titulo, detalhes):
         send_zapi_message(GRUPO_SYSTEM_LOGS, msg)
     except Exception as e:
         print(f"[LOG GRUPO] Falha ao enviar log: {e}")
+
+def _resolver_fase_bebe(telefone: str | None) -> str | None:
+    """
+    Resolve a fase do bebê para uma mãe a partir do telefone.
+    Nunca levanta exceção — retorna None em qualquer falha.
+    """
+    if not telefone:
+        return None
+    try:
+        from execution.supabase_client import get_supabase_client
+        supabase = get_supabase_client()
+
+        # 1. Busca perfil pelo telefone
+        perfil_res = (
+            supabase.table("perfis_maes")
+            .select("user_id, status_maternidade")
+            .eq("telefone", telefone)
+            .limit(1)
+            .execute()
+        )
+        if not perfil_res.data:
+            return None
+
+        perfil = perfil_res.data[0]
+        user_id = perfil.get("user_id")
+        status_maternidade = perfil.get("status_maternidade")
+
+        if not user_id:
+            return None
+
+        # 2. Busca filho mais novo
+        filho_res = (
+            supabase.table("filhos_maes")
+            .select("data_nascimento")
+            .eq("mae_id", user_id)
+            .order("data_nascimento", desc=True)
+            .limit(1)
+            .execute()
+        )
+        data_nascimento = None
+        if filho_res.data:
+            raw = filho_res.data[0].get("data_nascimento")
+            if raw:
+                data_nascimento = date.fromisoformat(str(raw)[:10])
+
+        return calcular_fase_bebe(data_nascimento, status_maternidade)
+    except Exception as e:
+        print(f"[FASE_BEBE] Erro ao resolver fase (não-crítico): {e}")
+        return None
+
 
 def validate_supplier_2_3_rule(supplier, pedido_subcategoria_id, pedido_texto, metadata_context):
     """
@@ -234,6 +286,10 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
     tel["categoria"] = str(pedido_cat)
     tel["subcategoria"] = str(pedido_sub)
 
+    # 5.5 ENRIQUECIMENTO DE CONTEXTO: fase do bebê (nunca bloqueia o fluxo)
+    fase_bebe = _resolver_fase_bebe(real_user_phone)
+    print(f"[ORQUESTRAÇÃO] Fase do bebê resolvida: {fase_bebe!r}")
+
     # 6. MATCH DE FORNECEDORES (Deterministic Search + LLM Validation)
     set_telemetry_stage("validacao")
     valid_suppliers = []
@@ -270,6 +326,7 @@ Contexto processado:
 - Categoria: {cat_name} (ID: {pedido_cat})
 - Subcategoria: {sub_name} (ID: {pedido_sub})
 - Descrição: {pedido_desc}
+- Fase do bebê: {fase_bebe if fase_bebe is not None else "não informada"}
 
 CANDIDATOS RETORNADOS PELA BUSCA VETORIAL (já executada):
 {json.dumps(candidates, ensure_ascii=False)}
@@ -371,16 +428,19 @@ Fornecedores selecionados para recomendar:
         mensagem_final = final_res.get("mensagem_final")
         
         # Registrar Recomendações no Banco
+        rec_ids = []
         if pedido_id and valid_suppliers:
             for s in valid_suppliers:
-                record_recomendacao({
+                rec = record_recomendacao({
                     "pedido_indicacao": pedido_id,
-                    "fornecedor_recomendado": s.get("fornecedor_id"), # Corrigido para 'recomendado'
-                    "motivo_recomendacao": s.get("motivo_match"),
+                    "fornecedor_recomendado": s.get("fornecedor_id"),
+                    "motivo_recomendacao": s.get("motivo_recomendacao"),
                     "link_fornecedor": s.get("link_fornecedor"),
                     "recomendacao_enviada": False,
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 })
+                if rec and rec.get("id"):
+                    rec_ids.append(rec["id"])
     except Exception as e:
         print(f"[ERRO] Falha na geração da resposta: {e}")
         mensagem_final = "Oi! No momento tive um probleminha para gerar sua resposta, mas nossa equipe já foi avisada e vai te ajudar logo mais. 🙏"
@@ -401,6 +461,21 @@ Fornecedores selecionados para recomendar:
                 "label": "Falar com parceiros",
                 "url": partner_url
             }]
+
+        # Envio para a Usuária
+        zapi_result = None
+        if button_actions:
+            zapi_result = send_zapi_button_actions(target_phone, mensagem_final, button_actions)
+        else:
+            zapi_result = send_zapi_message(target_phone, mensagem_final)
+
+        # Marca recomendações como enviadas somente após confirmação da Z-API
+        if zapi_result and rec_ids:
+            for rec_id in rec_ids:
+                update_recomendacao(rec_id, {
+                    "recomendacao_enviada": True,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                })
 
         # 10.1 REPLICAR INDICAÇÃO NO GRUPO MAIA INDICAÇÕES (como a usuária recebe)
         try:

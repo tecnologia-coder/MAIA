@@ -29,7 +29,23 @@ O pipeline de processamento segue uma sequência estruturada:
     *   Se **FALSE** (Não é um pedido válido): Encerrar imediatamente.
     *   Se **TRUE**: Prosseguir.
 6.  **Categorização:** Vinculação do pedido a categorias e subcategorias do banco de dados.
-7.  **Match de Fornecedores (Agentic Flow):** A LLM utiliza ferramentas (Vector Store, consultas de ID) para buscar, validar e enriquecer a lista de indicações.
+7.  **Enriquecimento de Contexto (Python — pré-agente):** Antes de chamar o agente de match, o orquestrador calcula o campo `fase_bebe` seguindo este fluxo:
+    1. Extrair `telefone` de `pedidos_indicacao.pedido_por` (campo JSONB, chave `"telefone"`).
+    2. Buscar em `perfis_maes` onde `telefone = telefone_extraido` → obter `user_id`.
+    3. Se `perfis_maes.status_maternidade = 'gestante'` → `fase_bebe = "gestante"` (passar `data_prevista_parto` como contexto adicional no input do agente).
+    4. Caso contrário, buscar em `filhos_maes` onde `mae_id = user_id`, ordenar por `data_nascimento DESC`, pegar o primeiro registro.
+    5. Calcular meses de vida entre `data_nascimento` e hoje. Resolver o `codigo` consultando a tabela `fase_bebe` no Supabase:
+        ```sql
+        SELECT codigo FROM fase_bebe
+        WHERE (idade_min_meses IS NULL OR idade_min_meses <= :meses)
+          AND (idade_max_meses IS NULL OR idade_max_meses >= :meses)
+        ORDER BY ordem
+        LIMIT 1;
+        ```
+        O valor de `fase_bebe` a passar ao agente é o `codigo` retornado (ex: `"0-3m"`, `"1-2a"`). Nunca hardcodar o mapeamento de faixas no script — a tabela é a fonte de verdade.
+    6. Se nenhum filho encontrado → `fase_bebe = null`.
+    7. Passar `fase_bebe` como campo no input do agente de match junto com os demais dados do pedido.
+8.  **Match de Fornecedores (Agentic Flow):** A LLM utiliza ferramentas (Vector Store, consultas de ID) para buscar, validar e enriquecer a lista de indicações.
 8.  **Persistência:** Registro do pedido estruturado na tabela `pedidos_indicacao`.
 9.  **Geração de Resposta:** Síntese da resposta final baseada na persona oficial.
 10. **Envio WhatsApp:** Entrega da mensagem via Z-API.

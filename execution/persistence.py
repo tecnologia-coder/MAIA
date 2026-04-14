@@ -56,7 +56,21 @@ def record_recomendacao(data):
         res = supabase.table("recomendacao_fornecedor").insert(data).execute()
         return res.data[0] if res.data else None
     except Exception as e:
-        print(f"[PERSISTENCE] Erro ao registrar recomendação: {e}")
+        import traceback
+        print(f"[PERSISTENCE] Erro ao registrar recomendação: {e}\n{traceback.format_exc()}")
+        return None
+
+def update_recomendacao(rec_id, update_data):
+    """
+    Atualiza um registro existente na tabela 'recomendacao_fornecedor'.
+    """
+    supabase = get_supabase_client()
+    try:
+        res = supabase.table("recomendacao_fornecedor").update(update_data).eq("id", rec_id).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        import traceback
+        print(f"[PERSISTENCE] Erro ao atualizar recomendação {rec_id}: {e}\n{traceback.format_exc()}")
         return None
 
 def record_mensagem(data):

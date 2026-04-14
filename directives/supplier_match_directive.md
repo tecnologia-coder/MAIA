@@ -46,6 +46,10 @@ A lista de fornecedores base fica na tabela `documents` (que é um vector store)
     *   **Nota sobre Dados Esparsos:** Se um fornecedor tiver uma descrição vazia ou curta, mas o seu **NOME** ou **SUBCATEGORIA** for um match direto para um termo específico e incomum do pedido (ex: "Gêmeos", "Robótica", "Aleman"), você **DEVE** considerá-lo um match válido, pois o nome comercial já indica a especialidade.
 2.  **Limite de Recomendações:** Selecionar no **máximo 3 (três)** parceiros. É preferível retornar uma lista vazia (`[]`) do que indicar um parceiro incorreto ou com "talvez" resolva o problema.
 3.  **Proibição de IA/Alucinação:** Nunca invente um fornecedor ou o link do WhatsApp. Todos os dados devem ser o retorno real das invocações de ferramenta.
+4.  **Campo `tracking` obrigatório:** Cada item de `recomendacoes` deve conter o objeto `tracking` com os campos abaixo. Todos os valores são fornecidos pelo orquestrador Python no input — o agente não deve calculá-los, apenas repassá-los:
+    *   `categoria_id`: ID numérico da categoria do pedido (vindo do input recebido).
+    *   `subcategoria_id`: ID numérico da subcategoria do pedido (vindo do input recebido).
+    *   `fase_bebe`: String calculada pelo orquestrador antes da chamada do agente (ex: `"0-3m"`, `"gestante"`). Se o orquestrador não encontrou dados, chega como `null` e deve ser repassado como `null`.
 
 ---
 
@@ -58,6 +62,7 @@ Antes de retornar a resposta (o JSON final), verifique mentalmente (ou no seu ch
 - [ ] Validei rigorosamente cada fornecedor (correspondência EXATA ao pedido)?
 - [ ] Chamei `link_fornecedor` para **cada** fornecedor recomendado?
 - [ ] Preenchi o `motivo_recomendacao` de forma clara e específica, ligando o prestador à dor do usuário?
+- [ ] Incluí o objeto `tracking` em cada recomendação com `categoria_id`, `subcategoria_id` e `fase_bebe` (ou `null`)?
 - [ ] O JSON final está no formato correto exigido?
 - [ ] Se não há recomendações válidas na busca, retornei o array vazio e cumpri a orientação de manter o nível de qualidade?
 
@@ -92,12 +97,22 @@ O resultado da sua execução **deve ser estritamente um JSON**, sem textos adic
     {
       "fornecedor_id": 789,
       "motivo_recomendacao": "Personal trainer especializado em treino funcional, com disponibilidade para treinos 3x por semana. Atende em domicílio ou parques.",
-      "link_fornecedor": "https://wa.me/5541977777777"
+      "link_fornecedor": "https://wa.me/5541977777777",
+      "tracking": {
+        "categoria_id": 8,
+        "subcategoria_id": 15,
+        "fase_bebe": null
+      }
     },
     {
       "fornecedor_id": 234,
       "motivo_recomendacao": "Personal trainer com foco em condicionamento físico e treino funcional. Trabalha com agendamento flexível de 2 a 5 sessões semanais.",
-      "link_fornecedor": "https://wa.me/5541966666666"
+      "link_fornecedor": "https://wa.me/5541966666666",
+      "tracking": {
+        "categoria_id": 8,
+        "subcategoria_id": 15,
+        "fase_bebe": null
+      }
     }
   ]
 }

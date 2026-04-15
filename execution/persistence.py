@@ -34,6 +34,31 @@ def get_group(group_id):
         print(f"[PERSISTENCE] Erro ao buscar grupo: {e}")
         return None, None
 
+def get_or_create_group(group_id_raw, group_name=None):
+    """
+    Busca o grupo pelo ID externo. Se não existir, cria automaticamente.
+    Retorna tupla (id_interno, nome_do_grupo).
+    """
+    supabase = get_supabase_client()
+    try:
+        res = supabase.table("grupos").select("id, grupo_nome").eq("grupo_id", group_id_raw).execute()
+        if res.data:
+            return res.data[0]["id"], res.data[0].get("grupo_nome")
+
+        # Grupo novo: registra automaticamente com nome provisório
+        novo_nome = group_name or group_id_raw
+        insert_res = supabase.table("grupos").insert({
+            "grupo_id": group_id_raw,
+            "grupo_nome": novo_nome
+        }).execute()
+        if insert_res.data:
+            print(f"[PERSISTENCE] Novo grupo registrado automaticamente: {group_id_raw}")
+            return insert_res.data[0]["id"], insert_res.data[0].get("grupo_nome")
+        return None, None
+    except Exception as e:
+        print(f"[PERSISTENCE] Erro ao obter/criar grupo: {e}")
+        return None, None
+
 def record_pedido(data):
     """
     Registra um pedido real na tabela 'pedidos_indicacao'.

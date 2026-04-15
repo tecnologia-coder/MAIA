@@ -11,6 +11,7 @@ from execution.fase_bebe import calcular_fase_bebe
 from execution.persistence import (
     get_or_create_profile,
     get_group,
+    get_or_create_group,
     record_pedido,
     update_pedido,
     record_recomendacao,
@@ -171,9 +172,9 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
     if chat_id:
         if "@g.us" in str(chat_id):
             formatted_chat_id = str(chat_id).replace("@g.us", "-group")
-            group_id, group_name = get_group(formatted_chat_id)
+            group_id, group_name = get_or_create_group(formatted_chat_id)
         elif "-group" in str(chat_id): # Fallback caso a API mude no futuro
-            group_id, group_name = get_group(chat_id)
+            group_id, group_name = get_or_create_group(chat_id)
 
     # 2.5 LOG DE AUDITORIA (Registro de todas as mensagens recebidas)
     try:
@@ -267,7 +268,6 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
     try:
         pedido_db_data = {
             "pedido_mensagem": message_text,
-            "pedido_grupo": group_id, 
             "profile": profile_id,
             "pedido_por": {"nome": sender_name or "Usuária", "telefone": real_user_phone},
             "recomendacao_feita": False,
@@ -275,6 +275,8 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
             "pedido_subcategoria": pedido_sub,
             "pedido_descricao": pedido_desc
         }
+        if group_id is not None:
+            pedido_db_data["pedido_grupo"] = group_id
         pedido_record = record_pedido(pedido_db_data)
         pedido_id = pedido_record["id"] if pedido_record else None
         print(f"[DEBUG] Registro realizado com categorização. ID: {pedido_id}")

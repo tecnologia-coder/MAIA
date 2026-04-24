@@ -1,3 +1,5 @@
+
+
 import json
 from execution.supabase_client import get_supabase_client
 from execution.search_suppliers import search_suppliers_by_text

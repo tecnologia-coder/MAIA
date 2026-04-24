@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from execution.process_message import process_whatsapp_message_e2e
+from execution.private_chat import handle_private_message
 from execution.daily_report import send_daily_report
 import uvicorn
 import os
@@ -47,15 +48,23 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
     
     # Lógica de Direcionamento:
     # 1. Ignorar mensagens sem texto
-    # 2. Ignorar mensagens de conversas privadas — MAIA responde apenas em grupos
-    # 3. Resposta vai para o grupo de origem da mensagem
+    # 2. Mensagens privadas (sem participant_phone) → chatbot de redirecionamento
+    # 3. Mensagens de grupo → fluxo principal de indicações
     if not message_text:
         print("[WEBHOOK] Mensagem recebida sem conteúdo de texto. Ignorando.")
         return {"status": "ignored", "reason": "No text content"}
 
     if not participant_phone:
-        print("[WEBHOOK] Mensagem de conversa privada ignorada. MAIA opera apenas em grupos.")
-        return {"status": "ignored", "reason": "Private messages are not supported"}
+        # Mensagem privada — chatbot de redirecionamento
+        print(f"[WEBHOOK] Mensagem privada de '{sender_name}' ({phone}). Acionando chatbot privado.")
+        background_tasks.add_task(
+            handle_private_message,
+            phone=phone,
+            message_text=message_text,
+            sender_name=sender_name,
+            is_from_me=is_from_me,
+        )
+        return {"status": "received", "info": "Mensagem privada encaminhada para o chatbot."}
 
     # Processamento em background
     background_tasks.add_task(

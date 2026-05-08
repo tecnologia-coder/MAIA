@@ -35,21 +35,16 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
     """
     Endpoint para receber mensagens da Z-API via n8n.
     """
-    data = await request.json()
+  data = await request.json()
+    print(f"[DEBUG] Payload recebido: {data}")
     
     # Extração baseada na estrutura da Z-API enviada pelo n8n
     body = data.get("body", {})
     
     message_text = body.get("text", {}).get("message", "")
-    is_from_me = body.get("fromMe", False)
-    phone = body.get("phone", "") # ID do Chat (Grupo ou Private)
-    participant_phone = body.get("participantPhone", "") # Quem enviou (em grupos)
-    sender_name = body.get("senderName", "Usuária")
-    
+    ...
+    ...
     # Lógica de Direcionamento:
-    # 1. Ignorar mensagens sem texto
-    # 2. Mensagens privadas (sem participant_phone) → chatbot de redirecionamento
-    # 3. Mensagens de grupo → fluxo principal de indicações
     if not message_text:
         print("[WEBHOOK] Mensagem recebida sem conteúdo de texto. Ignorando.")
         return {"status": "ignored", "reason": "No text content"}

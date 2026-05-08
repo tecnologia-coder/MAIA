@@ -35,7 +35,7 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
     """
     Endpoint para receber mensagens da Z-API via n8n.
     """
-  data = await request.json()
+    data = await request.json()
     print(f"[DEBUG] Payload recebido: {data}")
     
     # Extração baseada na estrutura da Z-API enviada pelo n8n

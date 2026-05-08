@@ -42,8 +42,10 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
     body = data.get("body", {})
     
     message_text = body.get("text", {}).get("message", "")
-    ...
-    ...
+    is_from_me = body.get("fromMe", False)
+    phone = body.get("phone", "")
+    participant_phone = body.get("participantPhone", "")
+    sender_name = body.get("senderName", "Usuária")
     # Lógica de Direcionamento:
     if not message_text:
         print("[WEBHOOK] Mensagem recebida sem conteúdo de texto. Ignorando.")

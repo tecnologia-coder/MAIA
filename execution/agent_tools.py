@@ -81,10 +81,27 @@ def link_fornecedor(fornecedor_id: int) -> str:
     print(f"[TOOL] Chamando link_fornecedor para ID: {fornecedor_id}")
     supabase = get_supabase_client()
     try:
-        res = supabase.table("parceiros").select("id, whatsapp_link, status").eq("id", fornecedor_id).execute()
-        if res.data:
-            return json.dumps(res.data[0], ensure_ascii=False)
-        return json.dumps({"erro": f"Fornecedor ID {fornecedor_id} não encontrado na tabela parceiros."})
+        # ATENÇÃO: a coluna de status em `parceiros` é `status_aprovacao` (não `status`).
+        # Selecionar `status` lançava erro 42703 e derrubava toda recomendação.
+        res = (
+            supabase.table("parceiros")
+            .select("id, nome, whatsapp_link, status_aprovacao")
+            .eq("id", fornecedor_id)
+            .execute()
+        )
+        if not res.data:
+            return json.dumps({"erro": f"Fornecedor ID {fornecedor_id} não encontrado na tabela parceiros."})
+
+        parceiro = res.data[0]
+        if parceiro.get("status_aprovacao") != "aprovado":
+            return json.dumps({
+                "erro": f"Fornecedor ID {fornecedor_id} não está aprovado (status: {parceiro.get('status_aprovacao')}). Não recomendar."
+            })
+        if not parceiro.get("whatsapp_link"):
+            return json.dumps({
+                "erro": f"Fornecedor ID {fornecedor_id} não possui whatsapp_link cadastrado. Não recomendar."
+            })
+        return json.dumps(parceiro, ensure_ascii=False)
     except Exception as e:
         print(f"[TOOL ERRO] link_fornecedor: {e}")
         return json.dumps({"erro": "Erro técnico ao buscar dados de contato."})

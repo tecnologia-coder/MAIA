@@ -4,8 +4,8 @@ import sys
 import time
 from datetime import date, datetime, timezone
 from execution.zapi_client import send_zapi_message, send_zapi_button_actions
-from execution.ai_client import call_ai_with_json_retry, call_claude, load_directive, set_telemetry_stage, collect_and_reset_tokens
-from execution.search_suppliers import search_suppliers_by_text
+from execution.ai_client import call_ai_with_json_retry, call_ai_agent, call_claude, load_directive, set_telemetry_stage, collect_and_reset_tokens
+from execution.search_suppliers import search_suppliers, search_suppliers_by_text
 from execution.get_metadata import get_metadata
 from execution.fase_bebe import calcular_fase_bebe
 from execution.persistence import (
@@ -88,40 +88,54 @@ def _resolver_fase_bebe(telefone: str | None) -> str | None:
         return None
 
 
-def validate_supplier_2_3_rule(supplier, pedido_subcategoria_id, pedido_texto, metadata_context):
+def validate_supplier_2_3_rule(supplier, pedido_subcategoria_id, pedido_categoria_id, pedido_texto, metadata_context, flags=None):
     """
-    Implementa a 'Regra dos 2/3' da supplier_match_directive:
-    1. Similaridade >= 0.60
-    2. Subcategoria igual (Nome ou ID)
-    3. Palavra-chave correspondente
+    Implementa a 'Regra dos 2/3' (pré-filtro determinístico antes do Agente LLM):
+    1. Similaridade/score de pré-filtro >= SIMILARITY_THRESHOLD
+    2. Aderência à taxonomia: subcategoria_id OU categoria_id igual (fallback por nome p/ docs antigos)
+    3. Palavra-chave no conteúdo OU atributo booleano exigido (espaço kids/menu kids/trocador) satisfeito
     """
+    flags = flags or {}
     matches = 0
-    
-    # Critério 1: Similaridade
+    metadata = supplier.get("metadata", {}) or {}
+
+    # Critério 1: Similaridade / score
     if supplier.get("similarity", 0) >= SIMILARITY_THRESHOLD:
         matches += 1
-        
-    # Critério 2: Subcategoria
-    metadata = supplier.get("metadata", {})
-    # Busca o nome da subcategoria pedida no contexto para comparar por nome
-    sub_pedida_nome = ""
-    for s in metadata_context.get("subcategorias", []):
-        if str(s.get("id")) == str(pedido_subcategoria_id):
-            sub_pedida_nome = s.get("nome", "").upper()
-            break
-            
-    meta_sub = str(metadata.get("subcategoria", "")).upper()
-    meta_sub_id = str(metadata.get("subcategoria_id", ""))
-    
-    if (sub_pedida_nome and sub_pedida_nome == meta_sub) or (str(pedido_subcategoria_id) == meta_sub_id):
+
+    # Critério 2: Aderência à taxonomia (por ID — determinístico; com fallback por nome)
+    meta_sub_id = str(metadata.get("subcategoria_id") or "")
+    meta_cat_id = str(metadata.get("categoria_id") or "")
+    taxonomy_ok = False
+    if pedido_subcategoria_id and meta_sub_id == str(pedido_subcategoria_id):
+        taxonomy_ok = True
+    elif pedido_categoria_id and meta_cat_id == str(pedido_categoria_id):
+        taxonomy_ok = True
+    else:
+        # Fallback por nome (compatível com documentos antigos sem *_id no metadata)
+        sub_pedida_nome = ""
+        for s in metadata_context.get("subcategorias", []):
+            if str(s.get("id")) == str(pedido_subcategoria_id):
+                sub_pedida_nome = (s.get("nome") or "").upper()
+                break
+        if sub_pedida_nome and sub_pedida_nome == str(metadata.get("subcategoria", "")).upper():
+            taxonomy_ok = True
+    if taxonomy_ok:
         matches += 1
-        
-    # Critério 3: Palavra-chave/Conteúdo
-    content = supplier.get("content", "").lower()
-    pedido_terms = [t for t in pedido_texto.lower().split() if len(t) > 3]
-    if any(term in content for term in pedido_terms):
+
+    # Critério 3: Palavra-chave no conteúdo OU atributo booleano exigido satisfeito
+    content = (supplier.get("content") or "").lower()
+    pedido_terms = [t for t in (pedido_texto or "").lower().split() if len(t) > 3]
+    keyword_ok = any(term in content for term in pedido_terms)
+    attr_ok = any(
+        flags.get(flag) and metadata.get(col)
+        for flag, col in (("requer_espaco_kids", "tem_espaco_kids"),
+                          ("requer_menu_kids", "tem_menu_kids"),
+                          ("requer_trocador", "tem_trocador"))
+    )
+    if keyword_ok or attr_ok:
         matches += 1
-        
+
     return matches >= 2
 
 def _save_telemetria(telemetry_data):
@@ -245,6 +259,14 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
         pedido_cat = triage_res.get("pedido_categoria")
         pedido_sub = triage_res.get("pedido_subcategoria")
         pedido_desc = triage_res.get("pedido_descricao")
+
+        # Sinais estruturais para o pré-filtro determinístico (atributos/região)
+        pedido_flags = {
+            "requer_espaco_kids": bool(triage_res.get("requer_espaco_kids")),
+            "requer_menu_kids": bool(triage_res.get("requer_menu_kids")),
+            "requer_trocador": bool(triage_res.get("requer_trocador")),
+            "cidade_mencionada": triage_res.get("cidade_mencionada"),
+        }
             
     except Exception as e:
         print(f"[ERRO] Falha técnica na triagem unificada: {e}")
@@ -292,36 +314,43 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
     fase_bebe = _resolver_fase_bebe(real_user_phone)
     print(f"[ORQUESTRAÇÃO] Fase do bebê resolvida: {fase_bebe!r}")
 
-    # 6. MATCH DE FORNECEDORES (Deterministic Search + LLM Validation)
+    # 6. MATCH DE FORNECEDORES (Busca Vetorial + Regra 2/3 + Agente LLM com Tool Calling)
     set_telemetry_stage("validacao")
     valid_suppliers = []
     try:
-        from execution.agent_tools import get_categoria, get_subcategoria, link_fornecedor
-        from execution.search_suppliers import search_suppliers_by_text
+        from execution.agent_tools import get_categoria, get_subcategoria, agentic_tools
 
         # 6.1 Resolve nomes de categoria/subcategoria (determinístico)
         cat_name = get_categoria(pedido_cat) or "Desconhecida"
         sub_name = get_subcategoria(pedido_sub) or "Desconhecida"
         print(f"[ORQUESTRAÇÃO] Categoria: {cat_name} | Subcategoria: {sub_name}")
 
-        # 6.2 Busca vetorial (determinístico)
-        search_query = f"{cat_name} {sub_name} - {pedido_desc} {message_text}"
-        print(f"[ORQUESTRAÇÃO] Query de busca: '{search_query}'")
-        candidates = search_suppliers_by_text(search_query)
-        print(f"[ORQUESTRAÇÃO] Busca vetorial retornou {len(candidates)} candidatos.")
+        # 6.2 Busca de candidatos: estruturada (determinística) + vetorial (ranqueamento)
+        cidade_hint = pedido_flags.get("cidade_mencionada") or ""
+        search_query = f"{cat_name} {sub_name} - {pedido_desc} {message_text} {cidade_hint}".strip()
+        print(f"[ORQUESTRAÇÃO] Query de busca: '{search_query}' | flags: {pedido_flags}")
+        candidates = search_suppliers(
+            search_query,
+            categoria_id=pedido_cat,
+            subcategoria_id=pedido_sub,
+            flags=pedido_flags,
+        )
+        print(f"[ORQUESTRAÇÃO] Busca retornou {len(candidates)} candidatos (estruturado + vetorial).")
 
         if candidates:
-            # 6.3 Enriquece candidatos com link de contato (determinístico)
-            for c in candidates:
-                fid = c.get("metadata", {}).get("id")
-                if fid:
-                    link_data = json.loads(link_fornecedor(fid))
-                    c["whatsapp_link"] = link_data.get("whatsapp_link")
-                    c["status_parceiro"] = link_data.get("status")
+            # 6.3 Regra dos 2/3: pré-filtro determinístico antes da validação agêntica
+            pre_filtered = [
+                c for c in candidates
+                if validate_supplier_2_3_rule(c, pedido_sub, pedido_cat, pedido_desc, metadata_context, pedido_flags)
+            ]
+            print(f"[ORQUESTRAÇÃO] Regra 2/3: {len(pre_filtered)}/{len(candidates)} candidatos aprovados.")
+            tel["candidatos_encontrados"] = len(candidates)
 
-            # 6.4 Validação pela LLM (chamada simples, sem tool calling)
+            agent_candidates = pre_filtered if pre_filtered else candidates
+
+            # 6.4 Validação e enriquecimento pelo Agente LLM (Tool Calling)
             match_instr = load_directive("supplier_match_directive.md")
-            validation_prompt = f"""Pedido original do usuário: {message_text}
+            agent_prompt = f"""Pedido original do usuário: {message_text}
 {memory_context}
 
 Contexto processado:
@@ -330,21 +359,31 @@ Contexto processado:
 - Descrição: {pedido_desc}
 - Fase do bebê: {fase_bebe if fase_bebe is not None else "não informada"}
 
-CANDIDATOS RETORNADOS PELA BUSCA VETORIAL (já executada):
-{json.dumps(candidates, ensure_ascii=False)}
+CANDIDATOS PRÉ-FILTRADOS PELA REGRA 2/3 (busca vetorial já executada):
+{json.dumps(agent_candidates, ensure_ascii=False)}
 
-IMPORTANTE: A busca vetorial e a recuperação de links JÁ FORAM EXECUTADAS acima.
-Sua tarefa é APENAS validar quais candidatos atendem ao pedido e retornar o JSON final.
-NÃO tente chamar ferramentas — os dados já estão disponíveis acima.
-Para cada fornecedor recomendado, use o whatsapp_link já presente nos dados do candidato."""
+Para cada fornecedor que você decidir recomendar, chame a ferramenta `link_fornecedor` com o seu ID para obter os dados reais de contato. Não invente links."""
 
-            print("[ORQUESTRAÇÃO] Enviando candidatos para validação pela LLM...")
-            validation_res = call_ai_with_json_retry(match_instr, validation_prompt)
+            print("[ORQUESTRAÇÃO] Iniciando Agente LLM com Tool Calling para validação...")
+            validation_res = call_ai_agent(match_instr, agent_prompt, agentic_tools)
 
             valid_suppliers = validation_res.get("recomendacoes", [])
-            tel["candidatos_encontrados"] = len(candidates)
+
+            # Backfill defensivo: se o agente não chamou link_fornecedor, busca o
+            # whatsapp_link real direto da tabela parceiros (nunca inventar link).
+            for s in valid_suppliers:
+                if not s.get("link_fornecedor") and s.get("fornecedor_id"):
+                    try:
+                        import json as _json
+                        from execution.agent_tools import link_fornecedor as _link
+                        dados = _json.loads(_link(s["fornecedor_id"]))
+                        if dados.get("whatsapp_link"):
+                            s["link_fornecedor"] = dados["whatsapp_link"]
+                    except Exception as e:
+                        print(f"[ORQUESTRAÇÃO] Backfill de link falhou p/ {s.get('fornecedor_id')}: {e}")
+
             tel["fornecedores_validados"] = len(valid_suppliers)
-            print(f"[ORQUESTRAÇÃO] LLM validou {len(valid_suppliers)} fornecedores.")
+            print(f"[ORQUESTRAÇÃO] Agente validou {len(valid_suppliers)} fornecedores.")
         else:
             print("[ORQUESTRAÇÃO] Busca vetorial não retornou candidatos.")
 

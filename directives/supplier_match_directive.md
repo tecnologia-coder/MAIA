@@ -44,6 +44,10 @@ A lista de fornecedores base fica na tabela `documents` (que é um vector store)
 
 1.  **Correspondência Exata (Validação Rigorosa):** Um fornecedor retornado pela busca vetorial pode atuar em áreas correlatas, mas você **só pode recomendá-lo** se o seu serviço/especialidade atender EXATAMENTE à necessidade descrita pelo usuário no pedido.
     *   **Nota sobre Dados Esparsos:** Se um fornecedor tiver uma descrição vazia ou curta, mas o seu **NOME** ou **SUBCATEGORIA** for um match direto para um termo específico e incomum do pedido (ex: "Gêmeos", "Robótica", "Aleman"), você **DEVE** considerá-lo um match válido, pois o nome comercial já indica a especialidade.
+    *   **Sinais estruturais do metadata (autoritativos):** O candidato traz no `metadata` campos determinísticos vindos do banco. Trate-os como verdade:
+        *   `tem_espaco_kids`/`tem_menu_kids`/`tem_trocador = true` confirmam o atributo correspondente — se o pedido exige "espaço kids" e o candidato tem `tem_espaco_kids = true`, é match válido **mesmo que o texto não repita** isso.
+        *   `subcategoria_id`/`categoria_id` indicam aderência à taxonomia do pedido.
+        *   **Região:** se o pedido cita um bairro/local (ex.: "Cerro Azul") e isso aparece no NOME, na CIDADE ou nas palavras-chave do candidato, considere atendida a restrição de região. Não rejeite por região quando o dado de localização não contradiz o pedido.
 2.  **Limite de Recomendações:** Selecionar no **máximo 3 (três)** parceiros. É preferível retornar uma lista vazia (`[]`) do que indicar um parceiro incorreto ou com "talvez" resolva o problema.
 3.  **Proibição de IA/Alucinação:** Nunca invente um fornecedor ou o link do WhatsApp. Todos os dados devem ser o retorno real das invocações de ferramenta.
 4.  **Campo `tracking` obrigatório:** Cada item de `recomendacoes` deve conter o objeto `tracking` com os campos abaixo. Todos os valores são fornecidos pelo orquestrador Python no input — o agente não deve calculá-los, apenas repassá-los:

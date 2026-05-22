@@ -50,5 +50,28 @@ A ferramenta retorna para o Agente uma lista bruta (JSON) de candidatos pré-qua
 }
 ```
 
-## 4. Auditoria e Logs
+## 4. Pré-filtro Estruturado Determinístico (Camada Anterior à Vetorial)
+
+Antes/junto da busca vetorial, o orquestrador executa um **pré-filtro determinístico** direto na
+tabela `parceiros` (apenas `status_aprovacao = 'aprovado'`) — `search_suppliers.search_suppliers`:
+
+- **Âncora de taxonomia:** mantém candidatos cuja `subcategoria_id` (score 0.85) ou `categoria_id`
+  (score 0.70) bate com a do pedido. A triagem e o cadastro podem usar subcategorias-irmãs
+  diferentes (ex.: pedido "PERSONALIZADOS" vs fornecedor "DOCES", ambos em "FESTAS"), por isso a
+  **categoria** é uma âncora válida.
+- **Atributos booleanos:** quando a triagem sinaliza `requer_espaco_kids`/`requer_menu_kids`/
+  `requer_trocador`, filtra por `tem_espaco_kids`/`tem_menu_kids`/`tem_trocador = true` (score 0.65).
+- **Região:** NÃO é filtro rígido (bairros como "Cerro Azul" não estão em `cidade`); entra como
+  sinal textual na query semântica/lexical.
+
+Os candidatos estruturados e os vetoriais são deduplicados por ID de parceiro (mantendo o maior score).
+
+## 5. Dependência de Infraestrutura (CRÍTICO)
+
+A busca vetorial depende da função SQL `public.match_documents(query_embedding, filter, match_count)`
+existir no banco. Se ela não existir, a chamada falha (`PGRST202`) e o sistema cai no fallback
+lexical/estruturado. O SQL de criação está em `sql/001_match_documents_and_indexes.sql`. Também é
+necessário o índice ANN (HNSW) em `documents.embedding` para performance.
+
+## 6. Auditoria e Logs
 Toda operação da ferramenta loga nativamente o score de similaridade do primeiro candidato para monitoramento de precisão (drift) do modelo de embeddings pelo time de engenharia.

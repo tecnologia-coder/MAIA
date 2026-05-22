@@ -40,6 +40,18 @@ Se `is_valid_request` for `true`, classifique o pedido usando **exclusivamente**
 - Reescrita puramente objetiva, focada na necessidade
 - Máximo 2 frases
 
+## ETAPA 3: Sinais Estruturais (somente se válido)
+
+Extraia sinais determinísticos que o orquestrador usa para filtrar fornecedores diretamente
+nas colunas do banco. Devolva `false`/`null` quando não houver menção explícita:
+
+- `requer_espaco_kids` (booleano): `true` se o pedido menciona espaço/área kids, playground,
+  brinquedão, "play", "lugar para as crianças brincarem" etc.
+- `requer_menu_kids` (booleano): `true` se menciona cardápio/menu infantil ("menu kids").
+- `requer_trocador` (booleano): `true` se menciona trocador/fraldário.
+- `cidade_mencionada` (string|null): nome do local/bairro/cidade citado no pedido
+  (ex.: "Cerro Azul", "Maringá"); `null` se nada for citado. NÃO inferir; só extrair o que está escrito.
+
 ## Formato de Saída Obrigatório
 
 A saída deve ser **exclusivamente** um objeto JSON, sem texto livre, markdown ou explicações fora das chaves.
@@ -52,7 +64,11 @@ A saída deve ser **exclusivamente** um objeto JSON, sem texto livre, markdown o
   "reason": "Pedido explícito de indicação de consultoria de amamentação",
   "pedido_categoria": 5,
   "pedido_subcategoria": 12,
-  "pedido_descricao": "A usuária busca indicação de consultoria de amamentação para gêmeos."
+  "pedido_descricao": "A usuária busca indicação de consultoria de amamentação para gêmeos.",
+  "requer_espaco_kids": false,
+  "requer_menu_kids": false,
+  "requer_trocador": false,
+  "cidade_mencionada": null
 }
 ```
 
@@ -75,6 +91,8 @@ A saída deve ser **exclusivamente** um objeto JSON, sem texto livre, markdown o
 * `pedido_categoria`: ID numérico da categoria (ou `null` se inválido)
 * `pedido_subcategoria`: ID numérico da subcategoria (ou `null` se inválido)
 * `pedido_descricao`: Descrição do pedido (ou `null` se inválido)
+* `requer_espaco_kids` / `requer_menu_kids` / `requer_trocador`: Booleanos (default `false`)
+* `cidade_mencionada`: String com o local citado, ou `null`
 
 **Proibições:**
 - Não permitir respostas textuais fora do JSON

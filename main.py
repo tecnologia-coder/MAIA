@@ -70,7 +70,7 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         is_from_me=is_from_me,
         chat_id=phone, # ID de onde veio (grupo de origem)
         sender_name=sender_name,
-        target_phone=phone, # Resposta vai para o grupo de origem
+        target_phone=participant_phone, # Resposta vai para o privado de quem pediu
         real_user_phone=participant_phone # Para gestão de perfil
     )
     

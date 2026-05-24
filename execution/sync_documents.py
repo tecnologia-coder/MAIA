@@ -5,7 +5,7 @@ Sincroniza a tabela `documents` com os dados atuais da tabela `parceiros`.
 
 Para cada parceiro ativo (status_aprovacao = 'aprovado'), este script:
 1. Monta um conteúdo rico combinando nome, categoria, subcategoria, palavras-chave e descrição
-2. Gera um novo embedding via OpenAI
+2. Gera um novo embedding via o provedor configurado (EMBEDDING_PROVIDER: google|openai)
 3. Atualiza (ou insere) o registro na tabela `documents`
 
 Uso:
@@ -19,7 +19,7 @@ import sys
 import time
 
 from execution.supabase_client import get_supabase_client
-from execution.ai_client import get_embedding
+from execution.ai_client import get_embedding, get_embedding_provider_info
 from execution.get_metadata import build_taxonomy_lookup, normalize_text
 
 # Console do Windows (cp1252) quebra ao imprimir ✓/✗ e acentos. Força UTF-8.
@@ -134,6 +134,10 @@ def build_metadata(p: dict, sub_por_nome=None, cat_por_nome=None) -> dict:
         "loc": {"lines": {"from": 1, "to": 5}},
     }
 
+    # Provedor/dimensão do embedding gravados no doc — permitem detectar store misto
+    # (vetores de provedores diferentes não são comparáveis).
+    meta.update(get_embedding_provider_info())
+
     # Atributos booleanos no metadata (habilitam filtro via `filter` no match_documents)
     for coluna, _ in ATRIBUTOS_BOOL:
         if p.get(coluna):
@@ -159,10 +163,16 @@ def sync(dry_run: bool = False, force: bool = False):
     parceiros = res.data
     print(f"Parceiros aprovados encontrados: {len(parceiros)}")
 
+    # Provedor/dimensão ativos — usados para detectar store misto no sync incremental.
+    provider_info = get_embedding_provider_info()
+    provider_atual = provider_info["embedding_provider"]
+    print(f"Provedor de embedding ativo: {provider_atual} ({provider_info['embedding_dim']} dims)")
+
     # Busca documentos existentes (para saber se é insert ou update e p/ sync incremental)
     docs_res = sb.table("documents").select("id, content, metadata").execute()
     doc_by_parceiro_id = {}
     content_by_parceiro_id = {}
+    provider_by_parceiro_id = {}
     for doc in docs_res.data:
         try:
             meta = doc["metadata"] if isinstance(doc["metadata"], dict) else json.loads(doc["metadata"])
@@ -170,6 +180,7 @@ def sync(dry_run: bool = False, force: bool = False):
             if pid:
                 doc_by_parceiro_id[int(pid)] = doc["id"]
                 content_by_parceiro_id[int(pid)] = doc.get("content")
+                provider_by_parceiro_id[int(pid)] = meta.get("embedding_provider")
         except Exception:
             pass
 
@@ -195,18 +206,21 @@ def sync(dry_run: bool = False, force: bool = False):
                 print()
                 continue
 
-            # Sync incremental: se o conteúdo não mudou, não re-embeda (economiza OpenAI).
+            # Sync incremental: pula o re-embed só se o conteúdo NÃO mudou E o doc já foi
+            # embeddado com o MESMO provedor atual. Se o provedor mudou, re-embeda mesmo com
+            # conteúdo igual (vetores de provedores diferentes não são comparáveis).
             # `force=True` ignora este atalho e reprocessa tudo.
-            if (not force) and pid in doc_by_parceiro_id and content_by_parceiro_id.get(pid) == content:
+            mesmo_provedor = provider_by_parceiro_id.get(pid) == provider_atual
+            if (not force) and pid in doc_by_parceiro_id and content_by_parceiro_id.get(pid) == content and mesmo_provedor:
                 # Mesmo assim atualiza o metadata (barato, sem custo de embedding)
                 sb.table("documents").update({"metadata": metadata}).eq("id", doc_by_parceiro_id[pid]).execute()
                 print(f"  · Inalterado (só metadata): {nome}")
                 skipped += 1
                 continue
 
-            # Gera embedding
-            embedding = get_embedding(content)
-            time.sleep(0.3)  # respeita rate limit da OpenAI
+            # Gera embedding (RETRIEVAL_DOCUMENT: embedding assimétrico de documento no Google)
+            embedding = get_embedding(content, task_type="RETRIEVAL_DOCUMENT")
+            time.sleep(0.3)  # respeita rate limit do provedor
 
             if pid in doc_by_parceiro_id:
                 # UPDATE

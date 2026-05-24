@@ -51,7 +51,17 @@ claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_
 # Nome do modelo padrão (estável e moderno)
 MODEL_NAME = "gemini-2.0-flash"
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
-EMBEDDING_MODEL = "text-embedding-3-small" # 1536 dimensões
+
+# --- Configuração de Embeddings (multi-provedor) ---
+# O store e a query DEVEM usar o mesmo provedor: vetores de provedores diferentes
+# não são comparáveis. Trocar EMBEDDING_PROVIDER obriga re-embeddar tudo (sync --force).
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "google").lower()  # "google" | "openai"
+GOOGLE_EMBEDDING_MODEL = os.getenv("GOOGLE_EMBEDDING_MODEL", "gemini-embedding-001")
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1536"))  # casa com a coluna documents.embedding vector(1536)
+OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"  # 1536 dimensões
+
+# --- Fallback cross-provider para LLMs de texto/JSON ---
+LLM_FALLBACK = os.getenv("LLM_FALLBACK", "true").lower() == "true"
 
 def is_retryable_error(exception):
     err_str = str(exception)
@@ -96,14 +106,11 @@ def call_gemini(system_instruction, user_prompt, model_name=MODEL_NAME, json_mod
             print(f"[AI_CLIENT ERROR] Falha no Gemini: {e}")
         raise e
 
-def call_ai_with_json_retry(system_instruction, user_prompt, model_name=MODEL_NAME):
-    """
-    Realiza a chamada à IA e garante a saída JSON. 
-    Se falhar no parse, tenta exatamente uma vez mais (conforme system_architecture_directive).
-    """
+def _gemini_json_with_retry(system_instruction, user_prompt, model_name=MODEL_NAME):
+    """Chamada Gemini garantindo saída JSON (1 retry de parse, conforme system_architecture_directive)."""
     attempts = 0
     max_json_attempts = 2
-    
+
     while attempts < max_json_attempts:
         attempts += 1
         try:
@@ -112,7 +119,7 @@ def call_ai_with_json_retry(system_instruction, user_prompt, model_name=MODEL_NA
             clean_res = raw_res.strip()
             if clean_res.startswith("```json"):
                 clean_res = clean_res.replace("```json", "", 1).replace("```", "", 1).strip()
-            
+
             return json.loads(clean_res)
         except json.JSONDecodeError as e:
             if attempts == max_json_attempts:
@@ -123,16 +130,32 @@ def call_ai_with_json_retry(system_instruction, user_prompt, model_name=MODEL_NA
             # Outros erros (como de rede/quota) já são tratados pelo decorador de retry
             raise e
 
+
+def call_ai_with_json_retry(system_instruction, user_prompt, model_name=MODEL_NAME):
+    """
+    Triagem/validação em JSON. Provedor primário = Gemini; se ele falhar (quota/transport
+    após os retries, ou parse JSON irrecuperável) e LLM_FALLBACK estiver ativo, cai para o
+    Claude, que também retorna JSON parseado (contrato compatível).
+    """
+    try:
+        return _gemini_json_with_retry(system_instruction, user_prompt, model_name=model_name)
+    except Exception as e:
+        if LLM_FALLBACK and claude_client:
+            print(f"[FALLBACK] Gemini indisponível na triagem/validação ({e}) → Claude")
+            # Chama o Claude "cru" (sem o seu próprio fallback) para não voltar ao Gemini em loop.
+            return _call_claude_raw(system_instruction, user_prompt)
+        raise e
+
 @retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=2, min=3, max=30),
     retry=retry_if_exception(is_retryable_error),
     reraise=True
 )
-def call_claude(system_instruction, user_prompt, model_name=CLAUDE_MODEL):
+def _call_claude_raw(system_instruction, user_prompt, model_name=CLAUDE_MODEL):
     """
     Realiza uma chamada para o Claude (Anthropic) e retorna JSON parseado.
-    Usado para geração de mensagens humanizadas.
+    Usado para geração de mensagens humanizadas. Sem fallback — ver call_claude().
     """
     if not claude_client:
         raise RuntimeError("[CLAUDE] ANTHROPIC_API_KEY não configurada no .env")
@@ -176,22 +199,81 @@ def call_claude(system_instruction, user_prompt, model_name=CLAUDE_MODEL):
             print(f"[CLAUDE ERROR] Falha: {e}")
         raise e
 
-def get_embedding(text, model=EMBEDDING_MODEL):
+
+def call_claude(system_instruction, user_prompt, model_name=CLAUDE_MODEL):
     """
-    Gera embedding vetorial para o texto fornecido usando OpenAI.
+    Geração de resposta com Claude (primário). Se o Claude falhar (após os retries, ou
+    chave ausente) e LLM_FALLBACK estiver ativo, cai para o Gemini em modo JSON.
+    """
+    try:
+        return _call_claude_raw(system_instruction, user_prompt, model_name=model_name)
+    except Exception as e:
+        if LLM_FALLBACK:
+            print(f"[FALLBACK] Claude indisponível ({e}) → Gemini")
+            # call_gemini (texto) já tem retry próprio; aqui só garantimos o JSON parseado.
+            raw_res = call_gemini(system_instruction, user_prompt, json_mode=True)
+            clean_res = raw_res.strip()
+            if clean_res.startswith("```json"):
+                clean_res = clean_res.replace("```json", "", 1).replace("```", "", 1).strip()
+            elif clean_res.startswith("```"):
+                clean_res = clean_res.replace("```", "", 1).rsplit("```", 1)[0].strip()
+            return json.loads(clean_res)
+        raise e
+
+
+@retry(
+    stop=stop_after_attempt(6),
+    wait=wait_exponential(multiplier=2, min=3, max=30),
+    retry=retry_if_exception(is_retryable_error),
+    reraise=True,
+)
+def _embed_google(text, task_type):
+    """Embedding via Google `gemini-embedding-001` (output configurável, default 1536 dims)."""
+    response = client.models.embed_content(
+        model=GOOGLE_EMBEDDING_MODEL,
+        contents=text.replace("\n", " "),
+        config=types.EmbedContentConfig(
+            output_dimensionality=EMBEDDING_DIM,
+            task_type=task_type,  # RETRIEVAL_DOCUMENT (store) | RETRIEVAL_QUERY (busca)
+        ),
+    )
+    return list(response.embeddings[0].values)
+
+
+def _embed_openai(text):
+    """Embedding via OpenAI `text-embedding-3-small` (1536 dims)."""
+    response = oa_client.embeddings.create(
+        input=[text.replace("\n", " ")],
+        model=OPENAI_EMBEDDING_MODEL,
+    )
+    return response.data[0].embedding
+
+
+def get_embedding(text, task_type="RETRIEVAL_DOCUMENT"):
+    """
+    Gera embedding vetorial para o texto, despachando para o provedor configurado
+    em EMBEDDING_PROVIDER ("google" | "openai"). O contrato (list[float]) é estável.
+
+    `task_type` só afeta o Google (retrieval assimétrico): use RETRIEVAL_DOCUMENT ao
+    indexar o store e RETRIEVAL_QUERY ao embedar a consulta.
     """
     try:
         if not text or not text.strip():
             return []
-
-        response = oa_client.embeddings.create(
-            input=[text.replace("\n", " ")],
-            model=model
-        )
-        return response.data[0].embedding
+        if EMBEDDING_PROVIDER == "openai":
+            return _embed_openai(text)
+        return _embed_google(text, task_type)
     except Exception as e:
-        print(f"[AI_CLIENT ERROR] Falha no Embedding OpenAI: {e}")
+        print(f"[AI_CLIENT ERROR] Falha no Embedding ({EMBEDDING_PROVIDER}): {e}")
         raise e
+
+
+def get_embedding_provider_info():
+    """Provedor/dimensão ativos — usado pelo sync para gravar no metadata e detectar store misto."""
+    return {
+        "embedding_provider": EMBEDDING_PROVIDER,
+        "embedding_dim": EMBEDDING_DIM,
+    }
 
 def load_directive(filename):
     """
@@ -208,7 +290,7 @@ def load_directive(filename):
     retry=retry_if_exception(is_retryable_error),
     reraise=True
 )
-def call_ai_agent(system_instruction, user_prompt, tools, model_name=MODEL_NAME):
+def _call_ai_agent_gemini(system_instruction, user_prompt, tools, model_name=MODEL_NAME):
     """
     Inicia uma sessão de chat com a LLM habilitada para Tool Calling (Agentic Flow).
     O cliente interage automaticamente com as funções Python fornecidas até compilar a resposta final em JSON.
@@ -257,4 +339,20 @@ def call_ai_agent(system_instruction, user_prompt, tools, model_name=MODEL_NAME)
             print(f"\n[AVISO] Limite de cota atingido no Agente. Tentando novamente...")
         else:
             print(f"[AI_AGENT ERROR] Falha no fluxo do Agente: {e}")
+        raise e
+
+
+def call_ai_agent(system_instruction, user_prompt, tools, model_name=MODEL_NAME):
+    """
+    Agente de validação com tool-calling (Gemini, primário). Se o Gemini falhar de vez
+    e LLM_FALLBACK estiver ativo, degrada para uma validação JSON SEM tools
+    (call_ai_with_json_retry → Gemini→Claude). Sem tools o agente não chama
+    link_fornecedor, mas o backfill defensivo em process_message.py cobre o contato.
+    """
+    try:
+        return _call_ai_agent_gemini(system_instruction, user_prompt, tools, model_name=model_name)
+    except Exception as e:
+        if LLM_FALLBACK:
+            print(f"[FALLBACK] Agente (tool-calling) indisponível ({e}) → validação JSON sem tools")
+            return call_ai_with_json_retry(system_instruction, user_prompt)
         raise e

@@ -59,9 +59,10 @@ def search_suppliers_by_text(query_text):
     supabase = get_supabase_client()
 
     try:
-        # Gera embedding dentro do try: se a OpenAI falhar (ex.: 429 sem quota),
+        # Gera embedding dentro do try: se o provedor falhar (ex.: 429 sem quota),
         # cai no fallback lexical em vez de propagar a exceção.
-        embedding = get_embedding(query_text)
+        # task_type=RETRIEVAL_QUERY: embedding assimétrico de consulta (relevante p/ Google).
+        embedding = get_embedding(query_text, task_type="RETRIEVAL_QUERY")
 
         rpc_params = {
             "query_embedding": embedding,

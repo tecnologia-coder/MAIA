@@ -28,3 +28,6 @@ output_utf8.txt
 final_output.txt
 final_output_utf8.txt
 .env.example
+
+# Somente para ambiente de desenvolvimento
+.mcp.json

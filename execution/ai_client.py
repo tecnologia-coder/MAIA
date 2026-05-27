@@ -141,7 +141,7 @@ def call_ai_with_json_retry(system_instruction, user_prompt, model_name=MODEL_NA
         return _gemini_json_with_retry(system_instruction, user_prompt, model_name=model_name)
     except Exception as e:
         if LLM_FALLBACK and claude_client:
-            print(f"[FALLBACK] Gemini indisponível na triagem/validação ({e}) → Claude")
+            print(f"[FALLBACK] Gemini indisponível na triagem/validação ({e}) -> Claude")
             # Chama o Claude "cru" (sem o seu próprio fallback) para não voltar ao Gemini em loop.
             return _call_claude_raw(system_instruction, user_prompt)
         raise e
@@ -209,7 +209,7 @@ def call_claude(system_instruction, user_prompt, model_name=CLAUDE_MODEL):
         return _call_claude_raw(system_instruction, user_prompt, model_name=model_name)
     except Exception as e:
         if LLM_FALLBACK:
-            print(f"[FALLBACK] Claude indisponível ({e}) → Gemini")
+            print(f"[FALLBACK] Claude indisponivel ({e}) -> Gemini")
             # call_gemini (texto) já tem retry próprio; aqui só garantimos o JSON parseado.
             raw_res = call_gemini(system_instruction, user_prompt, json_mode=True)
             clean_res = raw_res.strip()
@@ -346,13 +346,13 @@ def call_ai_agent(system_instruction, user_prompt, tools, model_name=MODEL_NAME)
     """
     Agente de validação com tool-calling (Gemini, primário). Se o Gemini falhar de vez
     e LLM_FALLBACK estiver ativo, degrada para uma validação JSON SEM tools
-    (call_ai_with_json_retry → Gemini→Claude). Sem tools o agente não chama
+    (call_ai_with_json_retry -> Gemini->Claude). Sem tools o agente não chama
     link_fornecedor, mas o backfill defensivo em process_message.py cobre o contato.
     """
     try:
         return _call_ai_agent_gemini(system_instruction, user_prompt, tools, model_name=model_name)
     except Exception as e:
         if LLM_FALLBACK:
-            print(f"[FALLBACK] Agente (tool-calling) indisponível ({e}) → validação JSON sem tools")
+            print(f"[FALLBACK] Agente (tool-calling) indisponível ({e}) -> validação JSON sem tools")
             return call_ai_with_json_retry(system_instruction, user_prompt)
         raise e

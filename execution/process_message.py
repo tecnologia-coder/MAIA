@@ -369,18 +369,21 @@ Para cada fornecedor que você decidir recomendar, chame a ferramenta `link_forn
 
             valid_suppliers = validation_res.get("recomendacoes", [])
 
-            # Backfill defensivo: se o agente não chamou link_fornecedor, busca o
-            # whatsapp_link real direto da tabela parceiros (nunca inventar link).
+            # Backfill defensivo: garante whatsapp_link e nome reais (da tabela parceiros)
+            # para cada fornecedor. O nome é necessário para o label do botão e a
+            # linha-resumo no texto. Nunca inventar link.
             for s in valid_suppliers:
-                if not s.get("link_fornecedor") and s.get("fornecedor_id"):
+                if (not s.get("link_fornecedor") or not s.get("nome")) and s.get("fornecedor_id"):
                     try:
                         import json as _json
                         from execution.agent_tools import link_fornecedor as _link
                         dados = _json.loads(_link(s["fornecedor_id"]))
-                        if dados.get("whatsapp_link"):
+                        if not s.get("link_fornecedor") and dados.get("whatsapp_link"):
                             s["link_fornecedor"] = dados["whatsapp_link"]
+                        if not s.get("nome") and dados.get("nome"):
+                            s["nome"] = dados["nome"]
                     except Exception as e:
-                        print(f"[ORQUESTRAÇÃO] Backfill de link falhou p/ {s.get('fornecedor_id')}: {e}")
+                        print(f"[ORQUESTRAÇÃO] Backfill falhou p/ {s.get('fornecedor_id')}: {e}")
 
             tel["fornecedores_validados"] = len(valid_suppliers)
             print(f"[ORQUESTRAÇÃO] Agente validou {len(valid_suppliers)} fornecedores.")
@@ -449,14 +452,13 @@ Retorne SOMENTE um JSON válido com a chave "motivo_tecnico".'''
 - Categoria: {cat_name}
 - Subcategoria: {sub_name}
 
-ESTRUTURA OBRIGATÓRIA DA MENSAGEM (siga TODOS os 5 blocos, nenhum pode ser pulado):
+ESTRUTURA OBRIGATÓRIA DA MENSAGEM (mensagem CURTA, sem nenhum link no corpo):
 1. Saudação com o nome da usuária
-2. Contexto do pedido com empatia (reformule o que ela pediu com suas palavras, mencione o grupo "{group_name}" se houver)
-3. Transição natural para os achados ("encontrei...", "separei pra você...")
-4. Lista dos fornecedores com descrição aprofundada de cada um (2-3 frases por fornecedor, conectando o serviço com a necessidade específica da usuária)
-5. CTA convidando a clicar no botão para falar com o parceiro de preferência
+2. Contexto do pedido com empatia (1-2 frases; reformule o que ela pediu, mencione o grupo "{group_name}" se houver)
+3. UMA linha-resumo curta por fornecedor no formato "• *Nome* — destaque em poucas palavras" (NÃO escreva 2-3 frases; é só um realce de uma linha)
+4. CTA curto convidando a tocar nos botões abaixo (plural) para falar direto no WhatsApp do parceiro de preferência
 
-Fornecedores selecionados para recomendar:
+Fornecedores selecionados para recomendar (use o campo "nome" no realce):
 {json.dumps(valid_suppliers, ensure_ascii=False)}"""
         
         # Usa Claude para geração humanizada; fallback para Gemini se chave não configurada
@@ -488,20 +490,18 @@ Fornecedores selecionados para recomendar:
 
     # 10. ENVIO WHATSAPP
     if mensagem_final:
-        # Monta botão único "Falar com parceiros" com IDs dos fornecedores na URL
-        supplier_params = []
-        for i, s in enumerate(valid_suppliers[:3]):
-            fid = s.get("fornecedor_id", 0)
-            supplier_params.append(f"supplier{i + 1}={fid}")
-
+        # Monta até 3 botões: um por fornecedor, levando direto ao seu whatsapp_link
         button_actions = []
-        if supplier_params:
-            partner_url = "https://maiahub.lovable.app/contato_fornecedor?" + "&".join(supplier_params)
-            button_actions = [{
+        for s in valid_suppliers[:3]:
+            link = s.get("link_fornecedor")
+            if not link:
+                continue  # sem whatsapp_link não há botão (nunca inventar)
+            nome = (s.get("nome") or "Falar com parceiro").strip()
+            button_actions.append({
                 "type": "URL",
-                "label": "Falar com parceiros",
-                "url": partner_url
-            }]
+                "label": nome[:24],  # limite de caracteres do label de botão no WhatsApp
+                "url": link
+            })
 
         # Envio para a Usuária
         zapi_result = None

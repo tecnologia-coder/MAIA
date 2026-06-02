@@ -19,45 +19,64 @@ def get_or_create_profile(phone, name="Usuária"):
         print(f"[PERSISTENCE] Erro ao obter/criar perfil: {e}")
         return None
 
+def _grupo_recebe_pv(row):
+    """
+    Lê o flag 'enviar_indicacao_pv' de uma linha da tabela 'grupos'.
+    Fail-open: ausência da coluna (migração ainda não aplicada) ou valor null
+    é tratado como True, preservando o comportamento atual de envio no PV.
+    """
+    flag = (row or {}).get("enviar_indicacao_pv")
+    return True if flag is None else bool(flag)
+
 def get_group(group_id):
     """
     Verifica se o grupo está registrado na tabela 'grupos'.
-    Retorna tupla (id_interno, nome_do_grupo) se existir, ou (None, None).
+    Retorna tupla (id_interno, nome_do_grupo, recebe_pv) se existir, ou (None, None, True).
     """
     supabase = get_supabase_client()
     try:
-        res = supabase.table("grupos").select("id, grupo_nome").eq("grupo_id", group_id).execute()
+        res = supabase.table("grupos").select("*").eq("grupo_id", group_id).execute()
         if res.data:
-            return res.data[0]["id"], res.data[0].get("grupo_nome")
-        return None, None
+            row = res.data[0]
+            return row["id"], row.get("grupo_nome"), _grupo_recebe_pv(row)
+        return None, None, True
     except Exception as e:
         print(f"[PERSISTENCE] Erro ao buscar grupo: {e}")
-        return None, None
+        return None, None, True
 
 def get_or_create_group(group_id_raw, group_name=None):
     """
-    Busca o grupo pelo ID externo. Se não existir, cria automaticamente.
-    Retorna tupla (id_interno, nome_do_grupo).
+    Busca o grupo pelo ID externo. Se não existir, cria automaticamente para
+    fins de auditoria/log.
+
+    Retorna 4-tupla (id_interno, nome_do_grupo, recebe_pv, is_listed):
+    - recebe_pv  : coluna enviar_indicacao_pv — False bloqueia envio no PV.
+    - is_listed  : True se o grupo JÁ estava cadastrado antes desta mensagem.
+                   False para grupos recém-criados automaticamente. Usado para
+                   garantir que só grupos pré-cadastrados disparam indicação no PV.
+    Fail-open em caso de erro de banco: retorna (None, None, True, False).
     """
     supabase = get_supabase_client()
     try:
-        res = supabase.table("grupos").select("id, grupo_nome").eq("grupo_id", group_id_raw).execute()
+        res = supabase.table("grupos").select("*").eq("grupo_id", group_id_raw).execute()
         if res.data:
-            return res.data[0]["id"], res.data[0].get("grupo_nome")
+            row = res.data[0]
+            return row["id"], row.get("grupo_nome"), _grupo_recebe_pv(row), True
 
-        # Grupo novo: registra automaticamente com nome provisório
+        # Grupo novo: registra automaticamente para auditoria, mas is_listed=False
         novo_nome = group_name or group_id_raw
         insert_res = supabase.table("grupos").insert({
             "grupo_id": group_id_raw,
             "grupo_nome": novo_nome
         }).execute()
         if insert_res.data:
-            print(f"[PERSISTENCE] Novo grupo registrado automaticamente: {group_id_raw}")
-            return insert_res.data[0]["id"], insert_res.data[0].get("grupo_nome")
-        return None, None
+            print(f"[PERSISTENCE] Novo grupo registrado automaticamente (sem PV): {group_id_raw}")
+            row = insert_res.data[0]
+            return row["id"], row.get("grupo_nome"), _grupo_recebe_pv(row), False
+        return None, None, True, False
     except Exception as e:
         print(f"[PERSISTENCE] Erro ao obter/criar grupo: {e}")
-        return None, None
+        return None, None, True, False
 
 def record_pedido(data):
     """
@@ -110,6 +129,31 @@ def record_mensagem(data):
     except Exception as e:
         print(f"[PERSISTENCE] Erro ao registrar mensagem de auditoria: {e}")
         return None
+
+def get_flag_status(title="status-maia"):
+    """
+    Lê a coluna 'flag' da tabela 'flags_status' para o 'title' informado.
+    Usada como kill-switch para o envio de indicações no PV (alterada por uma
+    interface frontend externa).
+
+    Fail-open: em caso de erro de leitura retorna None, e o chamador deve tratar
+    None como ativo para preservar o comportamento atual (não derrubar entregas
+    por um problema pontual de banco).
+    """
+    supabase = get_supabase_client()
+    try:
+        res = (
+            supabase.table("flags_status")
+            .select("flag")
+            .eq("title", title)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return res.data[0].get("flag")
+    except Exception as e:
+        print(f"[PERSISTENCE] Erro ao ler flags_status ({title}): {e}")
+    return None
 
 def update_pedido(pedido_id, update_data):
     """

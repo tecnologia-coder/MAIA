@@ -20,7 +20,8 @@ from execution.persistence import (
     record_pedido_sem_fornecedor,
     record_telemetria,
     get_chat_history,
-    save_to_chat_history
+    save_to_chat_history,
+    get_flag_status
 )
 
 # --- Configurações e Thresholds ---
@@ -183,12 +184,14 @@ def process_whatsapp_message_e2e(message_text, is_from_me=False, chat_id=None, s
     # Tratamento do ID do Grupo: Z-API envia '@g.us', mas o painel/banco salva como '-group'
     group_id = None
     group_name = None
+    grupo_recebe_pv = True   # flag enviar_indicacao_pv do grupo
+    grupo_listado = False    # False = privado ou grupo não cadastrado na tabela grupos
     if chat_id:
         if "@g.us" in str(chat_id):
             formatted_chat_id = str(chat_id).replace("@g.us", "-group")
-            group_id, group_name = get_or_create_group(formatted_chat_id)
+            group_id, group_name, grupo_recebe_pv, grupo_listado = get_or_create_group(formatted_chat_id)
         elif "-group" in str(chat_id): # Fallback caso a API mude no futuro
-            group_id, group_name = get_or_create_group(chat_id)
+            group_id, group_name, grupo_recebe_pv, grupo_listado = get_or_create_group(chat_id)
 
     # 2.5 LOG DE AUDITORIA (Registro de todas as mensagens recebidas)
     try:
@@ -489,6 +492,19 @@ Fornecedores selecionados para recomendar (use o campo "nome" no realce):
         mensagem_final = "Oi! No momento tive um probleminha para gerar sua resposta, mas nossa equipe já foi avisada e vai te ajudar logo mais. 🙏"
 
     # 10. ENVIO WHATSAPP
+    # Kill-switch GLOBAL: indicações no PV só são entregues quando flags_status.flag == "active".
+    # Fail-open: se a leitura falhar (None), preserva o comportamento atual (ativo).
+    flag_pv = get_flag_status("status-maia")
+    kill_switch_ativo = flag_pv is None or flag_pv == "active"
+
+    # Controle POR GRUPO:
+    # 1. grupo_listado: mensagem deve vir de um grupo pré-cadastrado na tabela 'grupos'.
+    #    Privado e grupos desconhecidos (auto-criados para auditoria) não recebem PV.
+    # 2. grupo_recebe_pv: coluna enviar_indicacao_pv=False bloqueia grupos específicos
+    #    (ex.: grupos de Desapego) mesmo sendo cadastrados.
+    # O envio no PV só ocorre se as 3 condições forem verdadeiras.
+    pv_ativo = kill_switch_ativo and grupo_listado and grupo_recebe_pv
+
     if mensagem_final:
         # Monta até 3 botões: um por fornecedor, levando direto ao seu whatsapp_link
         button_actions = []
@@ -503,22 +519,32 @@ Fornecedores selecionados para recomendar (use o campo "nome" no realce):
                 "url": link
             })
 
-        # Envio para a Usuária
+        # Envio para a Usuária (somente se as indicações no PV estiverem ativas)
         zapi_result = None
-        if button_actions:
-            zapi_result = send_zapi_button_actions(target_phone, mensagem_final, button_actions)
-        else:
-            zapi_result = send_zapi_message(target_phone, mensagem_final)
+        if pv_ativo:
+            if button_actions:
+                zapi_result = send_zapi_button_actions(target_phone, mensagem_final, button_actions)
+            else:
+                zapi_result = send_zapi_message(target_phone, mensagem_final)
 
-        # Marca recomendações como enviadas somente após confirmação da Z-API
-        if zapi_result and rec_ids:
-            for rec_id in rec_ids:
-                update_recomendacao(rec_id, {
-                    "recomendacao_enviada": True,
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                })
+            # Marca recomendações como enviadas somente após confirmação da Z-API
+            if zapi_result and rec_ids:
+                for rec_id in rec_ids:
+                    update_recomendacao(rec_id, {
+                        "recomendacao_enviada": True,
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    })
+        else:
+            if not grupo_listado:
+                motivo_bloqueio = "Grupo não cadastrado na tabela grupos ou mensagem privada — PV bloqueado por política"
+            elif not grupo_recebe_pv:
+                motivo_bloqueio = "Grupo configurado para não enviar indicação no PV (enviar_indicacao_pv=False)"
+            else:
+                motivo_bloqueio = "Indicações no PV estão desativadas na interface da Maia"
+            print(f"[ORQUESTRAÇÃO] Envio privado ignorado. Motivo: {motivo_bloqueio}.")
 
         # 10.1 REPLICAR INDICAÇÃO NO GRUPO MAIA INDICAÇÕES (como a usuária recebe)
+        # Mantida sempre, independente do kill-switch, para a equipe acompanhar.
         try:
             if button_actions:
                 send_zapi_button_actions(GRUPO_INDICACOES, mensagem_final, button_actions)
@@ -529,13 +555,22 @@ Fornecedores selecionados para recomendar (use o campo "nome" no realce):
             print(f"[AVISO] Falha ao enviar para o grupo de indicações: {e}")
 
         # 10.2 LOG DE SISTEMA (System Logs)
-        _log_sistema("Indicação enviada", (
-            f"De: *{sender_name or 'Desconhecido'}* ({real_user_phone or '?'})\n"
-            f"Grupo: {group_name or 'Privado'}\n"
-            f"Pedido: _{message_text}_\n"
-            f"Fornecedores: {len(valid_suppliers)} | Tempo: {time.time() - t_start:.1f}s"
-        ))
-             
+        if pv_ativo:
+            _log_sistema("Indicação enviada", (
+                f"De: *{sender_name or 'Desconhecido'}* ({real_user_phone or '?'})\n"
+                f"Grupo: {group_name or 'Privado'}\n"
+                f"Pedido: _{message_text}_\n"
+                f"Fornecedores: {len(valid_suppliers)} | Tempo: {time.time() - t_start:.1f}s"
+            ))
+        else:
+            _log_sistema("Indicação NÃO enviada no PV", (
+                f"{motivo_bloqueio}\n"
+                f"De: *{sender_name or 'Desconhecido'}* ({real_user_phone or '?'})\n"
+                f"Grupo: {group_name or 'Privado'}\n"
+                f"Pedido: _{message_text}_\n"
+                f"Fornecedores: {len(valid_suppliers)} | Tempo: {time.time() - t_start:.1f}s"
+            ))
+
     # Atualizando status do pedido indicando que o ciclo encerrou (com sucesso)
     if pedido_id:
         update_pedido(pedido_id, {"recomendacao_feita": True})
@@ -545,7 +580,7 @@ Fornecedores selecionados para recomendar (use o campo "nome" no realce):
         save_to_chat_history(real_user_phone, human_text=message_text, ai_text=mensagem_final)
 
     # Gravar telemetria de sucesso
-    tel["etapa_final"] = "sucesso"
+    tel["etapa_final"] = "sucesso" if pv_ativo else "indicacao_pv_desativada"
     tel["resposta_final"] = mensagem_final
     _save_telemetria(tel)
 

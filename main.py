@@ -33,13 +33,14 @@ def health_check():
 @app.post("/webhook")
 async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
     """
-    Endpoint para receber mensagens da Z-API via n8n.
+    Endpoint para receber mensagens diretamente da Z-API (webhook "Ao receber").
+    Mantém compatibilidade com o formato antigo do n8n, que embrulhava o payload
+    da Z-API dentro de uma chave `body`.
     """
     data = await request.json()
-   
-    
-    # Extração baseada na estrutura da Z-API enviada pelo n8n
-    body = data.get("body", {})
+
+    # Z-API direta envia os campos no topo do JSON; o n8n os colocava em `body`.
+    body = data.get("body") or data
     
     message_text = body.get("text", {}).get("message", "")
     is_from_me = body.get("fromMe", False)

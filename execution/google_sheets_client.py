@@ -36,9 +36,35 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-# Segredo do cliente OAuth (baixado do Google Cloud) e token do usuário (gerado na 1ª auth).
-GOOGLE_OAUTH_CLIENT_FILE = os.getenv("GOOGLE_OAUTH_CLIENT_FILE", "credentials.json")
-GOOGLE_OAUTH_TOKEN_FILE = os.getenv("GOOGLE_OAUTH_TOKEN_FILE", "token.json")
+# Em produção (Railway), os JSONs vêm como variáveis de ambiente e são gravados
+# em /tmp antes de qualquer autenticação. Em dev local, os arquivos são usados diretamente.
+def _bootstrap_oauth_files() -> tuple[str, str]:
+    """
+    Garante que credentials.json e token.json existam no disco.
+    Se GOOGLE_OAUTH_CLIENT_JSON / GOOGLE_OAUTH_TOKEN_JSON estiverem definidos,
+    grava o conteúdo em /tmp e retorna os caminhos de /tmp.
+    Caso contrário, usa os caminhos configurados pelas vars _FILE (dev local).
+    """
+    client_json = os.getenv("GOOGLE_OAUTH_CLIENT_JSON")
+    token_json = os.getenv("GOOGLE_OAUTH_TOKEN_JSON")
+
+    if client_json:
+        client_path = "/tmp/credentials.json"
+        with open(client_path, "w", encoding="utf-8") as f:
+            f.write(client_json)
+    else:
+        client_path = os.getenv("GOOGLE_OAUTH_CLIENT_FILE", "credentials.json")
+
+    if token_json:
+        token_path = "/tmp/token.json"
+        with open(token_path, "w", encoding="utf-8") as f:
+            f.write(token_json)
+    else:
+        token_path = os.getenv("GOOGLE_OAUTH_TOKEN_FILE", "token.json")
+
+    return client_path, token_path
+
+GOOGLE_OAUTH_CLIENT_FILE, GOOGLE_OAUTH_TOKEN_FILE = _bootstrap_oauth_files()
 
 # Limites do Google Sheets para nomes de aba.
 _MAX_TAB_LEN = 100

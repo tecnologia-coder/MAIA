@@ -8,3 +8,6 @@ tenacity
 openai
 anthropic
 apscheduler
+gspread
+google-auth
+google-auth-oauthlib

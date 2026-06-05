@@ -1,6 +1,8 @@
 import json
 import os
+import time
 import requests
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,6 +11,27 @@ ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
 ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
 ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN") # Opcional
 # Configurações removidas: N8N_RECEIVING_WEBHOOK_URL (Relay desativado conforme solicitado)
+
+
+def _zapi_base_url() -> str | None:
+    """Monta a base da URL Z-API ou retorna None se faltar credencial."""
+    if not ZAPI_INSTANCE_ID or not ZAPI_TOKEN:
+        print("[Z-API] Erro: ZAPI_INSTANCE_ID ou ZAPI_TOKEN não configurados.")
+        return None
+    return f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}"
+
+
+def _zapi_headers() -> dict:
+    headers = {"Content-Type": "application/json"}
+    if ZAPI_CLIENT_TOKEN:
+        headers["Client-Token"] = ZAPI_CLIENT_TOKEN
+    return headers
+
+
+def _is_retryable_zapi_error(exception) -> bool:
+    """Repete apenas em erros transitórios (rate limit / indisponibilidade)."""
+    err_str = str(exception)
+    return any(code in err_str for code in ["429", "500", "502", "503", "504"])
 
 
 def send_zapi_message(phone, message):
@@ -132,3 +155,91 @@ def send_zapi_button_actions(phone, message, button_actions):
     except Exception as e:
         print(f"[Z-API] Erro ao enviar botões de ação: {e}")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Leitura: listagem de chats/grupos e metadados de participantes
+# Usado por fluxos de automação (ex.: backup quinzenal de membros de grupos).
+# ---------------------------------------------------------------------------
+
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=3, max=30),
+    retry=retry_if_exception(_is_retryable_zapi_error),
+    reraise=True,
+)
+def list_chats(page: int = 1, page_size: int = 100) -> list[dict]:
+    """
+    Lista chats (grupos e contatos) via Z-API, de forma paginada.
+    GET /chats?page=N&pageSize=M
+    Retorna a lista de chats da página (vazia quando não há mais resultados).
+    """
+    base = _zapi_base_url()
+    if not base:
+        return []
+
+    url = f"{base}/chats"
+    params = {"page": page, "pageSize": page_size}
+
+    response = requests.get(url, headers=_zapi_headers(), params=params)
+    if response.status_code != 200:
+        print(f"[Z-API] Erro {response.status_code} ao listar chats (página {page}): {response.text}")
+    response.raise_for_status()
+    data = response.json()
+    return data if isinstance(data, list) else []
+
+
+def list_all_groups(page_size: int = 100, sleep_between_pages: float = 0.3) -> list[dict]:
+    """
+    Pagina /chats até esgotar e devolve apenas os chats que são grupos
+    (campo isGroup == True). Cada item traz pelo menos: phone, name, isGroup.
+    """
+    grupos: list[dict] = []
+    seen_phones: set[str] = set()
+    page = 1
+    while True:
+        chats = list_chats(page=page, page_size=page_size)
+        if not chats:
+            break
+        for c in chats:
+            if c.get("isGroup"):
+                phone = str(c.get("phone", "")).strip()
+                if phone and phone not in seen_phones:
+                    seen_phones.add(phone)
+                    grupos.append(c)
+        if len(chats) < page_size:
+            break  # última página
+        page += 1
+        time.sleep(sleep_between_pages)  # respeita rate limit
+
+    print(f"[Z-API] {len(grupos)} grupos encontrados (únicos).")
+    return grupos
+
+
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=3, max=30),
+    retry=retry_if_exception(_is_retryable_zapi_error),
+    reraise=True,
+)
+def get_group_metadata(group_phone: str) -> dict | None:
+    """
+    Busca metadados de um grupo (nome + participantes) via Z-API.
+    GET /group-metadata/{group_phone}
+
+    Retorna dict com, entre outros: subject, phone, owner, description,
+    e participants[] (cada um com phone, name, short, isAdmin, isSuperAdmin).
+    Retorna None em caso de credencial ausente ou resposta inesperada.
+    """
+    base = _zapi_base_url()
+    if not base:
+        return None
+
+    url = f"{base}/group-metadata/{group_phone}"
+
+    response = requests.get(url, headers=_zapi_headers())
+    if response.status_code != 200:
+        print(f"[Z-API] Erro {response.status_code} ao buscar metadata do grupo {group_phone}: {response.text}")
+    response.raise_for_status()
+    data = response.json()
+    return data if isinstance(data, dict) else None

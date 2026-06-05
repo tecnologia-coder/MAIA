@@ -1,26 +1,43 @@
 from fastapi import FastAPI, Request, BackgroundTasks
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
 from execution.process_message import process_whatsapp_message_e2e
 from execution.private_chat import handle_private_message
-from execution.daily_report import send_daily_report
+from execution.flows.registry import scheduled_flows, run_flow
 import uvicorn
 import os
 
-# --- Scheduler: Relatório diário às 10h (Brasília, UTC-3) ---
+# Scheduler dos fluxos periódicos. Todos os jobs (inclusive o relatório diário)
+# vêm do registry de fluxos — ver _agendar_fluxos().
 scheduler = BackgroundScheduler()
-scheduler.add_job(
-    send_daily_report,
-    trigger=CronTrigger(hour=10, minute=0, timezone="America/Sao_Paulo"),
-    id="daily_telemetry_report",
-    replace_existing=True
-)
+
+
+def _agendar_fluxos():
+    """
+    Agenda todos os fluxos periódicos habilitados do registry.
+    Novos fluxos passam a ser agendados só por existirem — sem editar este arquivo.
+    """
+    for flow in scheduled_flows():
+        scheduler.add_job(
+            run_flow,
+            trigger=flow.schedule,
+            args=[flow.name],
+            id=f"flow_{flow.name}",
+            replace_existing=True,
+            # Restart-safety: se o servidor estava reiniciando na hora do cron,
+            # ainda dispara desde que suba dentro de 1h da hora agendada.
+            misfire_grace_time=3600,
+            # Colapsa execuções perdidas acumuladas em UMA só (evita backup duplo).
+            coalesce=True,
+        )
+        print(f"[SCHEDULER] Fluxo '{flow.name}' agendado.")
+
 
 @asynccontextmanager
 async def lifespan(app):
+    _agendar_fluxos()
     scheduler.start()
-    print("[SCHEDULER] Relatório diário agendado para 10:00 (Brasília).")
+    print("[SCHEDULER] Fluxos periódicos agendados.")
     yield
     scheduler.shutdown()
 

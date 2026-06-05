@@ -69,3 +69,11 @@ O pipeline de processamento segue uma sequência estruturada:
 ## 4. Conformidade
 
 Qualquer modificação no código que viole estes princípios arquiteturais será considerada um bug crítico. O sistema deve priorizar a previsibilidade e a rastreabilidade sobre a flexibilidade emergente comum em agentes puramente generativos.
+
+## Ferramentas/Execução
+- Diretiva **normativa** (visão geral), sem script único. É materializada por:
+  - Orquestrador e2e: `execution/process_message.py::process_whatsapp_message_e2e`.
+  - Webhook/entrada: `main.py` (`POST /webhook`).
+  - Etapa agêntica (única com autonomia): `execution/ai_client.py::call_ai_agent`
+    + `execution/agent_tools.py`.
+  - Automações periódicas: framework `execution/flows/` (ex.: `backup_grupos`).

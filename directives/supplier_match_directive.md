@@ -122,3 +122,13 @@ O resultado da sua execução **deve ser estritamente um JSON**, sem textos adic
 }
 ```
 *(Nota: se nenhum fornecedor passar no crivo da validação exata, retorne `"recomendacoes": []`).*
+
+## Ferramentas/Execução
+- Carregada em runtime em `execution/process_message.py:355`
+  (`load_directive("supplier_match_directive.md")`).
+- Loop de agente (Tool Calling): `execution/ai_client.py::call_ai_agent`.
+- Ferramentas expostas ao agente: `execution/agent_tools.py`
+  (`supabase_vector_store`, `get_categoria`, `get_subcategoria`, `link_fornecedor`).
+- Busca: `execution/search_suppliers.py::search_suppliers`. Validação determinística
+  final (regra 2/3): `process_message.py::validate_supplier_2_3_rule`.
+- Contrato da busca vetorial detalhado em `vector_search_directive.md`.

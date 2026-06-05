@@ -53,3 +53,12 @@ A saída deve ser **exclusivamente** um objeto JSON estruturado, conforme o mode
 - Não usar variações na nomenclatura das chaves JSON.
 - Não incluir respostas introdutórias como "Aqui está a análise...".
 
+
+## Ferramentas/Execução
+- Em produção, esta etapa foi **CONSOLIDADA** em `triage_directive.md`, carregada em
+  `execution/process_message.py:243`. Este arquivo permanece como referência das
+  regras de classificação (Etapa 1 da triagem).
+- Backfill de pedidos antigos sem `tags_semanticas`: `scripts/classify_pedidos.py`.
+- NOTA: `src/app/api/cron/classify/route.ts` (+ cron no `vercel.json`) é uma versão
+  TypeScript/serverless **abandonada** (não há projeto Next.js que a deploye); não faz
+  parte do fluxo vivo. A Camada 3 oficial é Python.

@@ -75,3 +75,11 @@ necessário o índice ANN (HNSW) em `documents.embedding` para performance.
 
 ## 6. Auditoria e Logs
 Toda operação da ferramenta loga nativamente o score de similaridade do primeiro candidato para monitoramento de precisão (drift) do modelo de embeddings pelo time de engenharia.
+
+## Ferramentas/Execução
+- Implementação: `execution/search_suppliers.py` (`search_suppliers_by_text`, busca
+  por similaridade de cosseno) + `execution/ai_client.py::get_embedding` (gera o vetor).
+- Exposta ao Agente como a tool `supabase_vector_store` em `execution/agent_tools.py`.
+- O vector store (tabela `documents`) é populado por `execution/sync_documents.py::sync`
+  a partir da tabela `parceiros`.
+- Depende da RPC `match_documents` no Supabase (ver estado de infra do projeto).

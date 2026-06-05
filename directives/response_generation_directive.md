@@ -71,3 +71,8 @@ A resposta gerada deve ser **exclusivamente** um objeto JSON estruturado, sem ne
 ```
 
 *Nota: A string dentro de `"mensagem_final"` pode conter quebras de linha (escape `\n`) e formatações compatíveis com WhatsApp (como `*negrito*` ou `_itálico_`), desde que mantenha a estrutura JSON válida.*
+
+## Ferramentas/Execução
+- Carregada em runtime em `execution/process_message.py:442`
+  (`load_directive("response_generation_directive.md")`), junto com a persona.
+- Envio final (mensagem + um botão por fornecedor) via `execution/zapi_client.py`.

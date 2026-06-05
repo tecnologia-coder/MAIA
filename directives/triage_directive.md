@@ -98,3 +98,11 @@ A saída deve ser **exclusivamente** um objeto JSON, sem texto livre, markdown o
 - Não permitir respostas textuais fora do JSON
 - Não usar variações na nomenclatura das chaves JSON
 - Não incluir respostas introdutórias
+
+## Ferramentas/Execução
+- Carregada em runtime como prompt da LLM em `execution/process_message.py:243`
+  (`load_directive("triage_directive.md")`), via `execution/ai_client.py::load_directive`.
+- Chamada à LLM: `ai_client.call_ai_with_json_retry` (Gemini com fallback Claude).
+- **Consolida e SUPERSEDE** `classification_directive.md` (Etapa 1) +
+  `categorization_directive.md` (Etapa 2) numa única resposta JSON.
+- Taxonomia (categoria_id/subcategoria_id): `execution/get_metadata.py`.

@@ -36,3 +36,9 @@ A saída deve ser **exclusiva e estritamente** o objeto JSON abaixo, sem blocos 
 ```
 
 *Nota: Utilize exatamente os nomes dos campos da tabela `pedidos_indicacao`: `pedido_categoria`, `pedido_subcategoria` e `pedido_descricao`.*
+
+## Ferramentas/Execução
+- Em produção, esta etapa foi **CONSOLIDADA** em `triage_directive.md`, carregada em
+  `execution/process_message.py:243` (Etapa 2: devolve categoria_id + subcategoria_id
+  no mesmo JSON da triagem).
+- Lookup de taxonomia (categorias/subcategorias): `execution/get_metadata.py`.

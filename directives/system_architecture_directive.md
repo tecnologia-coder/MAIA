@@ -58,6 +58,10 @@ O pipeline de processamento segue uma sequência estruturada:
 
 ### 3.2. Contratos de Dados (JSON)
 *   Toda e qualquer saída final de um módulo LLM deve ser obrigatoriamente um **JSON válido**.
+*   O modelo Gemini usado pelo orquestrador deve ser configurável por ambiente
+    (`GEMINI_MODEL_NAME`) e ter fallback padrão para um modelo estável atual.
+    Evite depender de aliases/modelos hardcoded que podem ser aposentados pela API
+    e quebrar o tool-calling antes da validação de fornecedores.
 *   **Protocolo de Erro:**
     1. Se a saída final não for um JSON válido, o orquestrador deve realizar **exatamente uma (1) tentativa de retry**.
     2. Caso o erro persista após o retry, o sistema deve **logar o erro e abortar a execução** daquela requisição.

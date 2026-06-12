@@ -49,7 +49,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
 # Nome do modelo padrão (estável e moderno)
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
 # --- Configuração de Embeddings (multi-provedor) ---

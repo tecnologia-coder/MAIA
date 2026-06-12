@@ -1,9 +1,10 @@
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
 from execution.process_message import process_whatsapp_message_e2e
 from execution.private_chat import handle_private_message
 from execution.flows.registry import scheduled_flows, run_flow
+from execution.sync_documents import move_cancelled_partner, remove_partner_documents, sync_partner
 import uvicorn
 import os
 
@@ -96,6 +97,57 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         "status": "received", 
         "info": "A MAIA enviará a resposta diretamente via Z-API em alguns instantes."
     }
+
+def _partner_id_from_payload(payload: dict):
+    record = payload.get("record") or {}
+    old_record = payload.get("old_record") or {}
+    return record.get("id") or old_record.get("id")
+
+
+def _handle_partner_webhook(payload: dict):
+    event_type = (payload.get("type") or payload.get("eventType") or "").upper()
+    record = payload.get("record") or {}
+    old_record = payload.get("old_record") or {}
+    partner_id = record.get("id") or old_record.get("id")
+
+    if not partner_id:
+        print("[PARTNER SYNC] Payload sem id de parceiro. Ignorando.")
+        return
+
+    if event_type == "DELETE":
+        remove_partner_documents(partner_id)
+        return
+
+    status = record.get("status_aprovacao")
+    if status == "cancelado":
+        move_cancelled_partner(partner_id)
+        return
+
+    sync_partner(partner_id)
+
+
+@app.post("/webhooks/supabase/parceiros")
+async def supabase_partner_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Recebe Supabase Database Webhook da tabela `parceiros` e mantem
+    `documents` consistente com `status_aprovacao`.
+    """
+    expected_secret = os.environ.get("SUPABASE_PARTNER_SYNC_SECRET")
+    received_secret = request.headers.get("x-webhook-secret")
+
+    if not expected_secret:
+        raise HTTPException(status_code=503, detail="SUPABASE_PARTNER_SYNC_SECRET not configured")
+    if received_secret != expected_secret:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    payload = await request.json()
+    partner_id = _partner_id_from_payload(payload)
+    if not partner_id:
+        raise HTTPException(status_code=400, detail="Payload missing partner id")
+
+    background_tasks.add_task(_handle_partner_webhook, payload)
+    return {"status": "received", "partner_id": partner_id}
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))

@@ -66,14 +66,33 @@ tabela `parceiros` (apenas `status_aprovacao = 'aprovado'`) — `search_supplier
 
 Os candidatos estruturados e os vetoriais são deduplicados por ID de parceiro (mantendo o maior score).
 
-## 5. Dependência de Infraestrutura (CRÍTICO)
+## 5. Sincronizacao da Base de Parceiros com o Vector Store
+
+`documents` deve refletir somente parceiros disponiveis para recomendacao da MAIA:
+
+- `status_aprovacao = 'aprovado'`: o parceiro deve existir em `documents`.
+- `status_aprovacao != 'aprovado'`: o parceiro nao deve existir em `documents`.
+- `status_aprovacao = 'cancelado'`: o parceiro deve ser movido para `parceiros_cancelados`, removido de `parceiros` e removido de `documents`.
+- `DELETE` em `parceiros`: sempre remove os documentos associados ao parceiro.
+
+O fluxo incremental e recebido em `POST /webhooks/supabase/parceiros` (`main.py`), protegido pelo header `x-webhook-secret` com o valor de `SUPABASE_PARTNER_SYNC_SECRET`. O endpoint recebe eventos de Supabase Database Webhook (`INSERT`, `UPDATE`, `DELETE`) e delega para `execution/sync_documents.py`.
+
+Ferramentas deterministicas:
+- `sync_partner(partner_id)`: sincroniza um parceiro aprovado ou remove se nao estiver aprovado.
+- `remove_partner_documents(partner_id)`: remove todos os documentos do parceiro no vector store.
+- `move_cancelled_partner(partner_id)`: move cancelados para `parceiros_cancelados` e limpa o vector store.
+- `reconcile()`: corrige divergencias globais entre `parceiros`, `parceiros_cancelados` e `documents`.
+
+Para reparo manual, usar `python -m execution.sync_documents --reconcile` apos confirmar que o uso de embedding e as remocoes no banco estao autorizados.
+
+## 6. Dependência de Infraestrutura (CRÍTICO)
 
 A busca vetorial depende da função SQL `public.match_documents(query_embedding, filter, match_count)`
 existir no banco. Se ela não existir, a chamada falha (`PGRST202`) e o sistema cai no fallback
 lexical/estruturado. O SQL de criação está em `sql/001_match_documents_and_indexes.sql`. Também é
 necessário o índice ANN (HNSW) em `documents.embedding` para performance.
 
-## 6. Auditoria e Logs
+## 7. Auditoria e Logs
 Toda operação da ferramenta loga nativamente o score de similaridade do primeiro candidato para monitoramento de precisão (drift) do modelo de embeddings pelo time de engenharia.
 
 ## Ferramentas/Execução
@@ -81,5 +100,6 @@ Toda operação da ferramenta loga nativamente o score de similaridade do primei
   por similaridade de cosseno) + `execution/ai_client.py::get_embedding` (gera o vetor).
 - Exposta ao Agente como a tool `supabase_vector_store` em `execution/agent_tools.py`.
 - O vector store (tabela `documents`) é populado por `execution/sync_documents.py::sync`
-  a partir da tabela `parceiros`.
+  a partir da tabela `parceiros`; o fluxo incremental usa `sync_partner`, `remove_partner_documents`,
+  `move_cancelled_partner` e `reconcile`.
 - Depende da RPC `match_documents` no Supabase (ver estado de infra do projeto).

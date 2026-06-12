@@ -32,3 +32,4 @@ final_output_utf8.txt
 
 # Somente para ambiente de desenvolvimento
 .mcp.json
+config.toml

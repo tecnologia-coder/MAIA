@@ -1,6 +1,8 @@
 import json
 import os
 import time
+from urllib.parse import parse_qsl, quote, urlparse
+
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from dotenv import load_dotenv
@@ -32,6 +34,50 @@ def _is_retryable_zapi_error(exception) -> bool:
     """Repete apenas em erros transitórios (rate limit / indisponibilidade)."""
     err_str = str(exception)
     return any(code in err_str for code in ["429", "500", "502", "503", "504"])
+
+
+def prepare_whatsapp_button_url(raw_link: str | None) -> str | None:
+    """
+    Prepara links de WhatsApp vindos do banco para uso em botoes URL da Z-API.
+
+    A coluna `whatsapp_link` ja traz a mensagem pronta no parametro `text`.
+    Aqui nos apenas normalizamos o encoding para evitar texto visivel como
+    `%20`, `%2C` ou `%3F` quando o botao abre o WhatsApp.
+    """
+    if not raw_link or not isinstance(raw_link, str):
+        return None
+
+    raw_link = raw_link.strip()
+    if not raw_link:
+        return None
+
+    parsed = urlparse(raw_link)
+    host = (parsed.netloc or "").lower()
+    if parsed.scheme not in {"http", "https"}:
+        return None
+
+    query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+
+    phone = None
+    if host in {"wa.me", "www.wa.me"}:
+        phone = parsed.path.strip("/")
+    elif host in {"api.whatsapp.com", "www.api.whatsapp.com", "web.whatsapp.com"}:
+        if parsed.path.rstrip("/") != "/send":
+            return None
+        phone = query_params.get("phone")
+    else:
+        return None
+
+    phone = "".join(ch for ch in (phone or "") if ch.isdigit())
+    if not phone:
+        return None
+
+    text = query_params.get("text")
+    if text is None:
+        return raw_link
+
+    encoded_text = quote(text, safe="")
+    return f"https://api.whatsapp.com/send?phone={phone}&text={encoded_text}"
 
 
 def send_zapi_message(phone, message):

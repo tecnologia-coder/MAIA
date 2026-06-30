@@ -49,6 +49,8 @@ O pipeline de processamento segue uma sequência estruturada:
 8.  **Persistência:** Registro do pedido estruturado na tabela `pedidos_indicacao`.
 9.  **Geração de Resposta:** Síntese da resposta final baseada na persona oficial.
 10. **Envio WhatsApp:** Entrega da mensagem via Z-API.
+    - Links de parceiros em botoes devem usar `execution.zapi_client.prepare_whatsapp_button_url`.
+      A coluna `parceiros.whatsapp_link` permanece com a mensagem pronta de origem do lead; o valor bruto nunca deve ser enviado diretamente como URL de botao.
 
 ## 3. Regras de Orquestração e Controle
 

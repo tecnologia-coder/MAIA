@@ -3,7 +3,7 @@ import os
 import sys
 import time
 from datetime import date, datetime, timezone
-from execution.zapi_client import send_zapi_message, send_zapi_button_actions
+from execution.zapi_client import prepare_whatsapp_button_url, send_zapi_message, send_zapi_button_actions
 from execution.ai_client import call_ai_with_json_retry, call_ai_agent, call_claude, load_directive, set_telemetry_stage, collect_and_reset_tokens
 from execution.search_suppliers import search_suppliers, search_suppliers_by_text
 from execution.get_metadata import get_metadata
@@ -512,11 +512,15 @@ Fornecedores selecionados para recomendar (use o campo "nome" no realce):
             link = s.get("link_fornecedor")
             if not link:
                 continue  # sem whatsapp_link não há botão (nunca inventar)
+            prepared_link = prepare_whatsapp_button_url(link)
+            if not prepared_link:
+                print(f"[AVISO] whatsapp_link inválido para botão: fornecedor={s.get('fornecedor_id')} nome={s.get('nome')}")
+                continue
             nome = (s.get("nome") or "Falar com parceiro").strip()
             button_actions.append({
                 "type": "URL",
                 "label": nome[:24],  # limite de caracteres do label de botão no WhatsApp
-                "url": link
+                "url": prepared_link
             })
 
         # Envio para a Usuária (somente se as indicações no PV estiverem ativas)
